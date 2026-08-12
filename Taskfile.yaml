@@ -1,0 +1,30 @@
+version: 3
+
+tasks:
+  default:
+    desc: Build the agents CLI
+    cmds:
+      - task: build
+
+  build:
+    desc: Compile the agents binary to bin/agents
+    sources:
+      - cmd/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - bin/agents
+    cmds:
+      - mkdir -p bin
+      - go build -o bin/agents ./cmd/agents
+
+  install:
+    desc: Install the agents binary using Go's configured binary directory
+    cmds:
+      - go install ./cmd/agents
+
+  test:
+    desc: Run all Go tests
+    cmds:
+      - go test ./...
