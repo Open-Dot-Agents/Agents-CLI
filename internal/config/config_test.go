@@ -314,7 +314,6 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 	}
 	agentsRoot := filepath.Join(root, ".agents")
 	for _, path := range []string{
-		"AGENTS.md",
 		"manifest.json",
 		"tools/mcp.json",
 		"skills/example/SKILL.md",
@@ -518,7 +517,7 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 	}{
 		{
 			name:     "MCP only",
-			profiles: `["mcp", "future-profile"]`,
+			profiles: `["mcp"]`,
 			setup: func(t *testing.T, agentsRoot string) {
 				writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{"mcpServers":{}}`)
 			},
@@ -542,31 +541,36 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 	}
 }
 
-func TestValidateLegacyTreeRequiresAllProfiles(t *testing.T) {
+func TestValidateLegacyTreeDoesNotRequireDuplicateInstructions(t *testing.T) {
 	agentsRoot := t.TempDir()
 	writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{"mcpServers":{}}`)
 	writeFixture(t, filepath.Join(agentsRoot, "skills", "review", "SKILL.md"), "# Review\n")
 
-	err := Validate(agentsRoot)
-	if err == nil || !strings.Contains(err.Error(), "canonical instructions") {
-		t.Fatalf("expected legacy instructions requirement, got %v", err)
-	}
-	writeFixture(t, filepath.Join(agentsRoot, "AGENTS.md"), "# Instructions\n")
 	if err := Validate(agentsRoot); err != nil {
 		t.Fatalf("validate complete legacy tree: %v", err)
 	}
 }
 
-func TestValidateRejectsNonRegularOptionalInstructions(t *testing.T) {
+func TestValidateRejectsNonRegularRootInstructions(t *testing.T) {
 	agentsRoot := t.TempDir()
 	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
-	if err := os.Mkdir(filepath.Join(agentsRoot, "AGENTS.md"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(filepath.Dir(agentsRoot), "AGENTS.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	err := Validate(agentsRoot)
 	if err == nil || !strings.Contains(err.Error(), "canonical instructions") {
 		t.Fatalf("expected non-regular instructions error, got %v", err)
+	}
+}
+
+func TestValidateRejectsDuplicateAgentsInstructions(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Duplicate\n")
+	err := Validate(filepath.Join(root, ".agents"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate .agents/AGENTS.md") {
+		t.Fatalf("expected duplicate instruction error, got %v", err)
 	}
 }
 
@@ -788,8 +792,7 @@ func TestVendorCapabilities(t *testing.T) {
 	}{
 		{vendor: "copilot", mcpPath: ".github/mcp.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
 		{vendor: "codex", mcpPath: ".codex/config.toml", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
-		{vendor: "claude", mcpPath: ".mcp.json", skills: ".claude/skills", mcpStatus: "planned"},
-		{vendor: "opencode", mcpPath: "opencode.json", skills: ".agents/skills", mcpStatus: "workbench-projection-only"},
+		{vendor: "claude", mcpPath: ".mcp.json", skills: ".claude/skills", mcpStatus: "cli-projection-only"},
 	} {
 		t.Run(test.vendor, func(t *testing.T) {
 			capabilities, err := VendorCapabilities(test.vendor)
@@ -811,7 +814,7 @@ func TestVendorCapabilities(t *testing.T) {
 			}
 		})
 	}
-	if _, err := VendorCapabilities("unknown"); err == nil || !strings.Contains(err.Error(), "unsupported vendor") {
+	if _, err := VendorCapabilities("unknown"); err == nil || !strings.Contains(err.Error(), "unsupported stable vendor") {
 		t.Fatalf("expected unsupported vendor error, got %v", err)
 	}
 }

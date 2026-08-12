@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Open-Dot-Agents/Agents-CLI/internal/config"
 )
@@ -32,7 +31,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "init":
 		flags := flag.NewFlagSet("init", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		target := flags.String("target", ".", "directory in which to create .agents")
+		root := flags.String("root", ".", "repository root")
 		force := flags.Bool("force", false, "replace the generated starter files")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
@@ -43,11 +42,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if flags.NArg() != 0 {
 			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 		}
-		return config.Init(*target, *force)
+		return config.Init(*root, *force)
 	case "validate":
 		flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		source := flags.String("source", ".agents", "canonical .agents directory")
+		root := flags.String("root", ".", "repository root")
+		format := flags.String("format", "text", "output format: text or json")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -57,11 +57,33 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if flags.NArg() != 0 {
 			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 		}
-		return config.Validate(*source)
+		if *format != "text" && *format != "json" {
+			return fmt.Errorf("unsupported format %q", *format)
+		}
+		if err := config.Validate(filepath.Join(*root, ".agents")); err != nil {
+			if *format == "json" {
+				_ = json.NewEncoder(stdout).Encode(map[string]any{
+					"schemaVersion": "1.0.0", "standardVersion": "1.0.0",
+					"implementation": "reference-cli", "implementationVersion": version,
+					"class": "repository", "passed": false,
+					"checks": []map[string]any{{"id": "repository.validate", "passed": false, "diagnostic": "ODA-VALIDATE-0001", "message": err.Error()}},
+				})
+			}
+			return err
+		}
+		if *format == "json" {
+			return json.NewEncoder(stdout).Encode(map[string]any{
+				"schemaVersion": "1.0.0", "standardVersion": "1.0.0",
+				"implementation": "reference-cli", "implementationVersion": version,
+				"class": "repository", "passed": true,
+				"checks": []map[string]any{{"id": "repository.validate", "passed": true}},
+			})
+		}
+		return nil
 	case "capabilities":
 		flags := flag.NewFlagSet("capabilities", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		vendor := flags.String("vendor", "", "vendor: copilot, codex, claude, or opencode")
+		vendor := flags.String("vendor", "", "vendor: copilot, codex, or claude")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -79,21 +101,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(capabilities)
-	case "import", "export":
-		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	case "import":
+		flags := flag.NewFlagSet("import", flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		vendor := flags.String("vendor", "", "source or destination vendor: copilot, codex, claude, or opencode")
-		sourceDefault := "."
-		targetDefault := ".agents"
-		if args[0] == "export" {
-			sourceDefault = ".agents"
-			targetDefault = "."
-		}
-		source := flags.String("source", sourceDefault, "source directory")
-		target := flags.String("target", targetDefault, "target directory")
-		force := flags.Bool("force", false, "overwrite generated files and skills")
-		backup := flags.Bool("backup", false, "back up existing destination directories before overwriting (requires --force)")
-		diff := flags.Bool("diff", false, "show a summary of managed configuration changes")
+		vendor := flags.String("vendor", "", "source vendor: copilot, codex, or claude")
+		root := flags.String("root", ".", "repository root")
+		force := flags.Bool("force", false, "replace existing portable files")
+		backup := flags.Bool("backup", false, "back up replaced portable files (requires --force)")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -106,29 +120,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *vendor == "" {
 			return errors.New("--vendor is required")
 		}
-		options := config.WriteOptions{Force: *force, Backup: *backup}
-		if args[0] == "import" {
-			return runWithDiff(*diff, stdout, []string{*target}, func() error {
-				return config.ImportWithOptions(*vendor, *source, *target, options)
-			})
-		}
-		paths, err := config.ExportTargetPaths(*vendor, *source, *target)
-		if err != nil {
-			return err
-		}
-		return runWithDiff(*diff, stdout, paths, func() error {
-			return config.ExportWithOptions(*vendor, *source, *target, options)
-		})
-	case "convert":
-		flags := flag.NewFlagSet("convert", flag.ContinueOnError)
+		return config.ImportRepository(*vendor, *root, *force, *backup)
+	case "plan", "apply":
+		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		flags.SetOutput(stderr)
-		from := flags.String("from", "", "source vendor: copilot, codex, claude, or opencode")
-		to := flags.String("to", "", "destination vendor: copilot, codex, claude, or opencode")
-		source := flags.String("source", ".", "source directory")
-		target := flags.String("target", ".", "target directory")
-		force := flags.Bool("force", false, "overwrite generated files and skills")
-		backup := flags.Bool("backup", false, "back up existing destination directories before overwriting (requires --force)")
-		diff := flags.Bool("diff", false, "show a summary of managed configuration changes")
+		vendor := flags.String("vendor", "", "destination vendor: copilot, codex, or claude")
+		root := flags.String("root", ".", "repository root")
+		format := flags.String("format", "text", "output format: text or json")
+		check := flags.Bool("check", false, "fail if apply would change managed files")
+		adopt := flags.Bool("adopt", false, "adopt semantically equivalent unowned entries")
+		force := flags.Bool("force", false, "replace conflicting entries")
+		backup := flags.Bool("backup", false, "back up changed native files (requires --force)")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -138,19 +140,34 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if flags.NArg() != 0 {
 			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 		}
-		if *from == "" || *to == "" {
-			return errors.New("--from and --to are required")
+		if *vendor == "" {
+			return errors.New("--vendor is required")
 		}
-		paths, err := vendorTargetPaths(*to, *target)
+		if *format != "text" && *format != "json" {
+			return fmt.Errorf("unsupported format %q", *format)
+		}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup}
+		var result config.PlanResult
+		var err error
+		if args[0] == "plan" {
+			result, err = config.PlanProjection(*vendor, *root, options)
+		} else {
+			result, err = config.ApplyProjection(*vendor, *root, options)
+		}
+		if outputErr := writePlan(stdout, result, *format); outputErr != nil {
+			return outputErr
+		}
 		if err != nil {
 			return err
 		}
-		return runWithDiff(*diff, stdout, paths, func() error {
-			return config.ConvertWithOptions(*from, *to, *source, *target, config.WriteOptions{
-				Force:  *force,
-				Backup: *backup,
-			})
-		})
+		if *check {
+			for _, action := range result.Actions {
+				if action.Operation != "unchanged" {
+					return errors.New("managed configuration changes are required")
+				}
+			}
+		}
+		return nil
 	case "version":
 		flags := flag.NewFlagSet("version", flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -176,59 +193,38 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  agents init [--target <directory>] [--force]
-  agents validate [--source <.agents directory>]
-  agents capabilities --vendor <copilot|codex|claude|opencode>
+  agents init [--root <directory>] [--force]
+  agents validate [--root <directory>] [--format text|json]
+  agents capabilities --vendor <copilot|codex|claude>
   agents version
-  agents import --vendor <copilot|codex|claude|opencode> [--source <directory>] [--target <.agents directory>] [--force] [--backup] [--diff]
-  agents export --vendor <copilot|codex|claude|opencode> [--source <.agents directory>] [--target <directory>] [--force] [--backup] [--diff]
-  agents convert --from <copilot|codex|claude|opencode> --to <copilot|codex|claude|opencode> [--source <directory>] [--target <directory>] [--force] [--backup] [--diff]
+  agents import --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
+  agents plan --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force]
+  agents apply --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup]
 
-The init command creates a canonical .agents starter tree. The validate command
-checks its supported structure. Other commands translate MCP server configuration
-and copy shared instructions and skills. Canonical configuration uses
-.agents/AGENTS.md, .agents/tools/mcp.json, and .agents/skills. Copilot and Codex
-skills are stored at .agents/skills; their MCP configuration is .github/mcp.json
-and .codex/config.toml. Both vendors use the root AGENTS.md for instructions.
-Claude and OpenCode projections are experimental; use native-harness validation
-before relying on them in production.
-Exports honor selected manifest profiles; without a manifest they retain legacy
-all-profile behavior.
-Import defaults to source "." and target ".agents"; export defaults to source
-".agents" and target ".". Convert defaults to "." for both directories.
+Root and nested AGENTS.md files are canonical instructions. Portable metadata,
+MCP servers, and skills live below .agents. Plan is read-only. Apply performs
+structural native-file merges and records generated-entry hashes below
+.agents/.state/reference-cli. Conflicts fail unless equivalent content is
+adopted or an explicit forced backup is requested.
 `)
 }
 
-func vendorTargetPaths(vendor, target string) ([]string, error) {
-	switch strings.ToLower(vendor) {
-	case "copilot":
-		return []string{filepath.Join(target, ".github"), filepath.Join(target, ".agents"), filepath.Join(target, "AGENTS.md")}, nil
-	case "codex":
-		return []string{filepath.Join(target, ".codex"), filepath.Join(target, ".agents"), filepath.Join(target, "AGENTS.md")}, nil
-	case "claude":
-		return []string{filepath.Join(target, ".mcp.json"), filepath.Join(target, ".claude"), filepath.Join(target, "AGENTS.md"), filepath.Join(target, "CLAUDE.md")}, nil
-	case "opencode":
-		return []string{filepath.Join(target, "opencode.json"), filepath.Join(target, ".agents"), filepath.Join(target, "AGENTS.md")}, nil
-	default:
-		return nil, fmt.Errorf("unsupported vendor %q (supported: copilot, codex, claude, opencode)", vendor)
+func writePlan(stdout io.Writer, result config.PlanResult, format string) error {
+	if format == "json" {
+		return json.NewEncoder(stdout).Encode(result)
 	}
-}
-
-func runWithDiff(enabled bool, stdout io.Writer, paths []string, operation func() error) error {
-	if !enabled {
-		return operation()
+	if !result.Applicable {
+		for _, diagnostic := range result.Diagnostics {
+			if _, err := fmt.Fprintln(stdout, diagnostic); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	before, err := config.CaptureFiles(paths...)
-	if err != nil {
-		return err
+	for _, action := range result.Actions {
+		if _, err := fmt.Fprintf(stdout, "%s\t%s\n", action.Operation, action.Path); err != nil {
+			return err
+		}
 	}
-	if err := operation(); err != nil {
-		return err
-	}
-	after, err := config.CaptureFiles(paths...)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprint(stdout, config.RenderChangeSummary(before, after))
-	return err
+	return nil
 }

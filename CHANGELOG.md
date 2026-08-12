@@ -18,5 +18,14 @@ All notable changes to the reference CLI are documented here.
 ### Notes
 
 - Reference CLI projection tests are not native harness support evidence.
+- Root and nested `AGENTS.md` are used directly instead of copying a second
+  canonical instruction file under `.agents`.
+- `plan` and `apply` replace whole-file export and direct vendor conversion.
+  They merge owned MCP entries, preserve unrelated configuration, detect
+  drift, and record hashes under `.agents/.state/reference-cli`.
+- Codex and Claude projections preserve portable environment references using
+  native indirection. Copilot projections fail when this cannot be done safely.
+- OpenCode is no longer exposed by the stable CLI and remains a Workbench
+  experiment.
 - All compatibility claims remain governed by `compatibility.json`
   and the root `docs/COMPATIBILITY.md` file.

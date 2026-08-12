@@ -22,6 +22,7 @@ type mcpDocument struct {
 const (
 	manifestVersion = "1.0.0"
 	manifestStarter = `{
+  "$schema": "https://raw.githubusercontent.com/Open-Dot-Agents/Agents-Spec/v1.0.0/spec/1.0/schemas/manifest.schema.json",
   "version": "` + manifestVersion + `",
   "profiles": ["instructions", "mcp", "skills"]
 }
@@ -32,6 +33,7 @@ type manifestDocument struct {
 	Schema   string   `json:"$schema"`
 	Version  string   `json:"version"`
 	Profiles []string `json:"profiles"`
+	Requires []string `json:"requires"`
 }
 
 // MCPServer contains the fields shared by the supported repository-scoped MCP formats.
@@ -55,8 +57,10 @@ type codexServer struct {
 	Command                  string            `toml:"command,omitempty"`
 	Args                     []string          `toml:"args,omitempty"`
 	Env                      map[string]string `toml:"env,omitempty"`
+	EnvVars                  []string          `toml:"env_vars,omitempty"`
 	URL                      string            `toml:"url,omitempty"`
 	HTTPHeaders              map[string]string `toml:"http_headers,omitempty"`
+	EnvHTTPHeaders           map[string]string `toml:"env_http_headers,omitempty"`
 	StartupTimeoutSec        int               `toml:"startup_timeout_sec,omitempty"`
 	ToolTimeoutSec           int               `toml:"tool_timeout_sec,omitempty"`
 	DefaultToolsApprovalMode string            `toml:"default_tools_approval_mode,omitempty"`
@@ -70,26 +74,28 @@ type WriteOptions struct {
 
 // Capabilities describes the repository-scoped configuration supported for a vendor.
 type Capabilities struct {
-	Vendor         string            `json:"vendor"`
-	Name           string            `json:"name"`
-	Harness        string            `json:"harness"`
-	HarnessVersion string            `json:"harness_version,omitempty"`
-	Status         string            `json:"status"`
-	Profiles       []string          `json:"profiles"`
-	ProfileStatus  map[string]string `json:"profile_status"`
-	Paths          map[string]string `json:"paths"`
-	Evidence       string            `json:"evidence"`
-	Limitations    []string          `json:"limitations,omitempty"`
+	Vendor           string            `json:"vendor"`
+	Name             string            `json:"name"`
+	Harness          string            `json:"harness"`
+	HarnessVersion   string            `json:"harness_version,omitempty"`
+	Status           string            `json:"status"`
+	Profiles         []string          `json:"profiles"`
+	ProfileStatus    map[string]string `json:"profile_status"`
+	CapabilityStatus map[string]string `json:"capability_status"`
+	Paths            map[string]string `json:"paths"`
+	Evidence         string            `json:"evidence"`
+	Limitations      []string          `json:"limitations,omitempty"`
 }
 
 type compatibilitySummary struct {
-	Name           string
-	Harness        string
-	HarnessVersion string
-	Status         string
-	ProfileStatus  map[string]string
-	Evidence       string
-	Limitations    []string
+	Name             string
+	Harness          string
+	HarnessVersion   string
+	Status           string
+	ProfileStatus    map[string]string
+	CapabilityStatus map[string]string
+	Evidence         string
+	Limitations      []string
 }
 
 var vendorCompatibility = map[string]compatibilitySummary{
@@ -102,10 +108,12 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"mcp":          "cli-projection-only",
 			"skills":       "cli-projection-only",
 		},
-		Evidence: "CLI unit tests only; no version-pinned native-harness black-box run",
+		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "unsupported"},
+		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
 		Limitations: []string{
 			"No immutable native harness version is pinned",
 			"No native black-box run covers instruction discovery, MCP startup, or skill discovery",
+			"Portable MCP environment references are refused because current documented project configuration exposes literal values",
 		},
 	},
 	"codex": {
@@ -117,10 +125,12 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"mcp":          "cli-projection-only",
 			"skills":       "cli-projection-only",
 		},
-		Evidence: "CLI unit tests only; no version-pinned native-harness black-box run",
+		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "transformed"},
+		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
 		Limitations: []string{
 			"No immutable native harness version is pinned",
 			"No native black-box run covers instruction discovery, MCP startup, or skill discovery",
+			"Stdio environment references must use the same source and target variable name",
 		},
 	},
 	"claude": {
@@ -128,14 +138,15 @@ var vendorCompatibility = map[string]compatibilitySummary{
 		Harness: "Claude Code",
 		Status:  "not-conformance-supported",
 		ProfileStatus: map[string]string{
-			"instructions": "planned",
-			"mcp":          "planned",
-			"skills":       "planned",
+			"instructions": "cli-projection-only",
+			"mcp":          "cli-projection-only",
+			"skills":       "cli-projection-only",
 		},
-		Evidence: "No native adapter evidence or black-box run",
+		CapabilityStatus: map[string]string{"instructions": "transformed", "instructions.scoped": "projection-only", "skills": "transformed", "mcp.stdio": "transformed", "mcp.remote": "transformed", "mcp.envRef": "transformed"},
+		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
 		Limitations: []string{
-			"No native adapter evidence is recorded",
 			"No immutable native harness version is pinned",
+			"No native black-box run covers instruction discovery, MCP startup, or skill discovery",
 		},
 	},
 	"opencode": {
@@ -155,7 +166,7 @@ var vendorCompatibility = map[string]compatibilitySummary{
 	},
 }
 
-// Init creates a canonical .agents tree containing editable instruction, MCP, and skill stubs.
+// Init creates a canonical repository containing editable instruction, MCP, and skill stubs.
 func Init(root string, force bool) error {
 	agentsRoot := filepath.Join(root, ".agents")
 	info, err := os.Stat(agentsRoot)
@@ -170,10 +181,6 @@ func Init(root string, force bool) error {
 	}
 
 	stubs := map[string]string{
-		"AGENTS.md": `# Repository Agent Instructions
-
-Add shared instructions for every agent working in this repository.
-`,
 		"manifest.json": manifestStarter,
 		"tools/mcp.json": `{
   "mcpServers": {}
@@ -189,12 +196,15 @@ Describe when this skill applies and the steps an agent should follow.
 			return err
 		}
 	}
-	return nil
+	return writeFile(filepath.Join(root, "AGENTS.md"), []byte(`# Repository Agent Instructions
+
+Add shared instructions for every agent working in this repository.
+`), force)
 }
 
 // VendorCapabilities reports the configuration profiles and paths supported for vendor.
 func VendorCapabilities(vendor string) (Capabilities, error) {
-	vendor, err := normalizeVendor(vendor)
+	vendor, err := normalizeStableVendor(vendor)
 	if err != nil {
 		return Capabilities{}, err
 	}
@@ -208,16 +218,17 @@ func VendorCapabilities(vendor string) (Capabilities, error) {
 		paths["instructions_bridge"] = "CLAUDE.md"
 	}
 	return Capabilities{
-		Vendor:         vendor,
-		Name:           summary.Name,
-		Harness:        summary.Harness,
-		HarnessVersion: summary.HarnessVersion,
-		Status:         summary.Status,
-		Profiles:       []string{"instructions", "mcp", "skills"},
-		ProfileStatus:  summary.ProfileStatus,
-		Paths:          paths,
-		Evidence:       summary.Evidence,
-		Limitations:    summary.Limitations,
+		Vendor:           vendor,
+		Name:             summary.Name,
+		Harness:          summary.Harness,
+		HarnessVersion:   summary.HarnessVersion,
+		Status:           summary.Status,
+		Profiles:         []string{"instructions", "mcp", "skills"},
+		ProfileStatus:    summary.ProfileStatus,
+		CapabilityStatus: summary.CapabilityStatus,
+		Paths:            paths,
+		Evidence:         summary.Evidence,
+		Limitations:      summary.Limitations,
 	}, nil
 }
 
@@ -254,12 +265,34 @@ func Validate(root string) error {
 		selected["skills"] = true
 	}
 	if selected["instructions"] {
-		instructionsPath := filepath.Join(root, "AGENTS.md")
-		if hasManifest {
-			if err := validateOptionalRegularFile(instructionsPath, "canonical instructions"); err != nil {
-				return err
+		repositoryRoot := filepath.Dir(root)
+		if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); err == nil {
+			return errors.New("duplicate .agents/AGENTS.md is not part of the 1.0 portable contract")
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
-		} else if err := requireRegularFile(instructionsPath, "canonical instructions"); err != nil {
+			if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".state") {
+				return filepath.SkipDir
+			}
+			if entry.IsDir() && path != repositoryRoot {
+				if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+					return filepath.SkipDir
+				} else if !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+			}
+			if entry.Name() != "AGENTS.md" {
+				return nil
+			}
+			if !entry.Type().IsRegular() {
+				return fmt.Errorf("canonical instructions %q are not a regular file", path)
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 	}
@@ -468,16 +501,31 @@ func readVendorMCP(vendor, root string) (map[string]MCPServer, error) {
 	}
 	servers := make(map[string]MCPServer, len(document.Servers))
 	for name, server := range document.Servers {
-		servers[name] = MCPServer{
-			Command:                  server.Command,
-			Args:                     server.Args,
-			Env:                      server.Env,
+		canonical := MCPServer{
+			Command: server.Command,
+			Args:    server.Args,
+			Env:     server.Env,
+			// env_vars is the portable secret-reference form. Literal env remains
+			// import-only legacy data and is rejected by versioned validation.
 			URL:                      server.URL,
 			Headers:                  server.HTTPHeaders,
 			StartupTimeoutSec:        server.StartupTimeoutSec,
 			ToolTimeoutSec:           server.ToolTimeoutSec,
 			DefaultToolsApprovalMode: server.DefaultToolsApprovalMode,
 		}
+		if len(server.EnvVars) > 0 {
+			canonical.Env = map[string]string{}
+			for _, variable := range server.EnvVars {
+				canonical.Env[variable] = "urn:open-dot-agents:env:" + variable
+			}
+		}
+		if len(server.EnvHTTPHeaders) > 0 {
+			canonical.Headers = map[string]string{}
+			for header, variable := range server.EnvHTTPHeaders {
+				canonical.Headers[header] = "urn:open-dot-agents:env:" + variable
+			}
+		}
+		servers[name] = canonical
 	}
 	return canonicalizeVendorServers(servers)
 }
@@ -1217,7 +1265,21 @@ func validateManifest(path string) ([]string, bool, error) {
 		if _, seen := seenProfiles[profile]; seen {
 			return nil, true, fmt.Errorf("manifest %q has duplicate profile %q", path, profile)
 		}
+		if profile != "instructions" && profile != "mcp" && profile != "skills" {
+			return nil, true, fmt.Errorf("manifest %q has unsupported 1.0 profile %q", path, profile)
+		}
 		seenProfiles[profile] = struct{}{}
+	}
+	knownCapabilities := map[string]bool{"instructions": true, "instructions.scoped": true, "skills": true, "mcp.stdio": true, "mcp.remote": true, "mcp.envRef": true}
+	seenCapabilities := map[string]bool{}
+	for _, capability := range manifest.Requires {
+		if !knownCapabilities[capability] {
+			return nil, true, fmt.Errorf("manifest %q has unsupported capability %q", path, capability)
+		}
+		if seenCapabilities[capability] {
+			return nil, true, fmt.Errorf("manifest %q has duplicate capability %q", path, capability)
+		}
+		seenCapabilities[capability] = true
 	}
 	return manifest.Profiles, true, nil
 }

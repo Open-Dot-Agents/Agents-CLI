@@ -96,6 +96,13 @@ def check_supported_evidence(data: dict[str, Any]) -> list[str]:
         label = adapter.get("id", adapter.get("name", "<unknown>"))
         if not adapter.get("harness_version"):
             errors.append(f"{label}: conformance-supported requires harness_version")
+        capabilities = adapter.get("capabilities", {})
+        required = {"instructions", "instructions.scoped", "skills", "mcp.stdio", "mcp.remote", "mcp.envRef"}
+        if set(capabilities) != required:
+            errors.append(f"{label}: conformance-supported must declare every 1.0 capability")
+        for capability, outcome in capabilities.items():
+            if outcome not in {"lossless", "transformed"}:
+                errors.append(f"{label}: conformance-supported capability {capability} is {outcome}")
         evidence = str(adapter.get("evidence", "")).lower()
         if "unit test" in evidence or "projection test" in evidence or "no version-pinned" in evidence:
             errors.append(f"{label}: conformance-supported requires native black-box evidence")
@@ -134,6 +141,7 @@ def check_cli_capabilities(data: dict[str, Any]) -> list[str]:
             "harness_version": adapter.get("harness_version"),
             "status": adapter.get("status"),
             "profile_status": expected_profiles,
+            "capability_status": adapter.get("capabilities", {}),
             "evidence": adapter.get("evidence"),
             "limitations": adapter.get("limitations", []),
         }

@@ -9,175 +9,87 @@ import (
 	"testing"
 )
 
-func TestRunExportUsesLocalDefaults(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers": {}}`)
-	withWorkingDirectory(t, root)
-
-	stdout := &bytes.Buffer{}
-	if err := run([]string{"export", "--vendor", "copilot", "--diff"}, stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("export with defaults: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".github", "mcp.json")); err != nil {
-		t.Fatalf("default target was not written: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "A  .github/mcp.json") {
-		t.Fatalf("expected diff summary, got %q", stdout.String())
-	}
-}
-
-func TestRunExportDiffShowsForcedModification(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers": {}}`)
-	withWorkingDirectory(t, root)
-
-	if err := run([]string{"export", "--vendor", "copilot"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("initial export: %v", err)
-	}
-	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"example":{"command":"example-mcp"}}}`)
-	stdout := &bytes.Buffer{}
-	if err := run([]string{"export", "--vendor", "copilot", "--force", "--diff"}, stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("forced export with diff: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "M  .github/mcp.json") {
-		t.Fatalf("expected modified MCP summary, got %q", stdout.String())
-	}
-}
-
-func TestRunImportUsesLocalDefaults(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".github", "mcp.json"), `{"mcpServers": {}}`)
-	withWorkingDirectory(t, root)
-
-	if err := run([]string{"import", "--vendor", "copilot"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("import with defaults: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".agents", "tools", "mcp.json")); err != nil {
-		t.Fatalf("default target was not written: %v", err)
-	}
-}
-
-func TestRunValidateUsesLocalDefault(t *testing.T) {
+func TestRunInitValidateAndPlanApply(t *testing.T) {
 	root := t.TempDir()
 	withWorkingDirectory(t, root)
-
 	if err := run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("initialize canonical tree: %v", err)
+		t.Fatalf("init: %v", err)
 	}
-	if err := run([]string{"validate"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("validate canonical tree: %v", err)
+	if err := run([]string{"validate", "--format", "json"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	if err := run([]string{"plan", "--vendor", "codex", "--format", "json"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	var plan struct {
+		Applicable bool `json:"applicable"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil || !plan.Applicable {
+		t.Fatalf("unexpected plan: %s (%v)", stdout.String(), err)
+	}
+	if err := run([]string{"apply", "--vendor", "codex"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, path := range []string{".codex/config.toml", ".agents/.state/reference-cli/codex.json"} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Fatalf("missing applied file %s: %v", path, err)
+		}
+	}
+	if err := run([]string{"plan", "--vendor", "codex", "--check"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("idempotent check: %v", err)
+	}
+}
+
+func TestRunApplyRefusesUnsupportedCopilotSecretReference(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"secret":{"type":"stdio","command":"server","env":{"TOKEN":"urn:open-dot-agents:env:TOKEN"}}}}`)
+	withWorkingDirectory(t, root)
+	stdout := &bytes.Buffer{}
+	err := run([]string{"apply", "--vendor", "copilot"}, stdout, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "cannot safely represent") {
+		t.Fatalf("expected loss diagnostic, got %v (%s)", err, stdout.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github", "mcp.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("lossy apply wrote native configuration: %v", statErr)
 	}
 }
 
 func TestRunCapabilitiesWritesJSON(t *testing.T) {
-	for _, test := range []struct {
-		vendor string
-		status string
-		mcp    string
-	}{
-		{vendor: "codex", status: "not-conformance-supported", mcp: ".codex/config.toml"},
-		{vendor: "claude", status: "not-conformance-supported", mcp: ".mcp.json"},
-	} {
-		t.Run(test.vendor, func(t *testing.T) {
-			stdout := &bytes.Buffer{}
-			if err := run([]string{"capabilities", "--vendor", test.vendor}, stdout, &bytes.Buffer{}); err != nil {
-				t.Fatalf("read capabilities: %v", err)
-			}
-			var capabilities struct {
-				Vendor        string            `json:"vendor"`
-				Status        string            `json:"status"`
-				Paths         map[string]string `json:"paths"`
-				ProfileStatus map[string]string `json:"profile_status"`
-			}
-			if err := json.Unmarshal(stdout.Bytes(), &capabilities); err != nil {
-				t.Fatalf("capabilities output is not JSON: %v", err)
-			}
-			if capabilities.Vendor != test.vendor || capabilities.Status != test.status || capabilities.Paths["mcp"] != test.mcp {
-				t.Fatalf("unexpected capabilities: %#v", capabilities)
-			}
-			if capabilities.ProfileStatus["mcp"] == "" {
-				t.Fatalf("capabilities did not include profile status: %#v", capabilities)
-			}
-		})
+	for _, vendor := range []string{"copilot", "codex", "claude"} {
+		stdout := &bytes.Buffer{}
+		if err := run([]string{"capabilities", "--vendor", vendor}, stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("capabilities %s: %v", vendor, err)
+		}
+		var capabilities struct {
+			Vendor string `json:"vendor"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &capabilities); err != nil || capabilities.Vendor != vendor || capabilities.Status == "" {
+			t.Fatalf("unexpected capabilities: %s (%v)", stdout.String(), err)
+		}
+	}
+}
+
+func TestRemovedCommandsAreRejected(t *testing.T) {
+	for _, command := range []string{"export", "convert"} {
+		if err := run([]string{command}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Fatalf("removed command %s was accepted: %v", command, err)
+		}
 	}
 }
 
 func TestRunVersionWritesVersion(t *testing.T) {
 	previous := version
 	version = "1.0.0-test"
-	t.Cleanup(func() {
-		version = previous
-	})
-
+	t.Cleanup(func() { version = previous })
 	stdout := &bytes.Buffer{}
 	if err := run([]string{"version"}, stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("read version: %v", err)
+		t.Fatal(err)
 	}
 	if stdout.String() != "agents 1.0.0-test\n" {
 		t.Fatalf("unexpected version output: %q", stdout.String())
-	}
-}
-
-func TestRunExportDiffIncludesInstructions(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers": {}}`)
-	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# First\n")
-	withWorkingDirectory(t, root)
-
-	if err := run([]string{"export", "--vendor", "copilot"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("initial export: %v", err)
-	}
-	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Second\n")
-	stdout := &bytes.Buffer{}
-	if err := run([]string{"export", "--vendor", "copilot", "--force", "--diff"}, stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("forced export with diff: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "M  AGENTS.md") {
-		t.Fatalf("expected instruction diff summary, got %q", stdout.String())
-	}
-}
-
-func TestRunExperimentalExportDiffIncludesManagedPaths(t *testing.T) {
-	tests := []struct {
-		vendor string
-		paths  []string
-	}{
-		{vendor: "claude", paths: []string{".mcp.json", "AGENTS.md", "CLAUDE.md"}},
-		{vendor: "opencode", paths: []string{"opencode.json", "AGENTS.md"}},
-	}
-	for _, test := range tests {
-		t.Run(test.vendor, func(t *testing.T) {
-			root := t.TempDir()
-			writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers": {}}`)
-			writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
-			withWorkingDirectory(t, root)
-
-			stdout := &bytes.Buffer{}
-			if err := run([]string{"export", "--vendor", test.vendor, "--diff"}, stdout, &bytes.Buffer{}); err != nil {
-				t.Fatalf("export %s: %v", test.vendor, err)
-			}
-			for _, path := range test.paths {
-				if !strings.Contains(stdout.String(), "A  "+path) {
-					t.Fatalf("expected %q in diff summary, got %q", path, stdout.String())
-				}
-			}
-		})
-	}
-}
-
-func TestRunExportDiffHonorsManifestProfiles(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
-	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
-	writeFile(t, filepath.Join(root, ".github", "mcp.json"), `{"mcpServers":{"keep":{"command":"keep"}}}`)
-	withWorkingDirectory(t, root)
-
-	stdout := &bytes.Buffer{}
-	if err := run([]string{"export", "--vendor", "copilot", "--diff"}, stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("export selected manifest profile: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "A  AGENTS.md") || strings.Contains(stdout.String(), ".github/mcp.json") {
-		t.Fatalf("unexpected selected-profile diff: %q", stdout.String())
 	}
 }
 

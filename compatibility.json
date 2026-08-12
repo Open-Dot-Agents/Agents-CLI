@@ -14,10 +14,19 @@
         "mcp": "cli-projection-only",
         "skills": "cli-projection-only"
       },
+      "capabilities": {
+        "instructions": "projection-only",
+        "instructions.scoped": "projection-only",
+        "skills": "projection-only",
+        "mcp.stdio": "projection-only",
+        "mcp.remote": "projection-only",
+        "mcp.envRef": "unsupported"
+      },
       "evidence": "CLI unit tests only; no version-pinned native-harness black-box run",
       "limitations": [
         "No immutable native harness version is pinned",
-        "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
+        "No native black-box run covers instruction discovery, MCP startup, or skill discovery",
+        "Portable MCP environment references are refused because current documented project configuration exposes literal values"
       ]
     },
     {
@@ -32,10 +41,19 @@
         "mcp": "cli-projection-only",
         "skills": "cli-projection-only"
       },
+      "capabilities": {
+        "instructions": "projection-only",
+        "instructions.scoped": "projection-only",
+        "skills": "projection-only",
+        "mcp.stdio": "projection-only",
+        "mcp.remote": "projection-only",
+        "mcp.envRef": "transformed"
+      },
       "evidence": "CLI unit tests only; no version-pinned native-harness black-box run",
       "limitations": [
         "No immutable native harness version is pinned",
-        "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
+        "No native black-box run covers instruction discovery, MCP startup, or skill discovery",
+        "Stdio environment references must use the same source and target variable name"
       ]
     },
     {
@@ -46,29 +64,19 @@
       "harness_version": null,
       "status": "not-conformance-supported",
       "profiles": {
-        "instructions": "planned",
-        "mcp": "planned",
-        "skills": "planned"
+        "instructions": "cli-projection-only",
+        "mcp": "cli-projection-only",
+        "skills": "cli-projection-only"
       },
-      "evidence": "No native adapter evidence or black-box run",
-      "limitations": [
-        "No native adapter evidence is recorded",
-        "No immutable native harness version is pinned"
-      ]
-    },
-    {
-      "id": "reference-cli-opencode",
-      "reference_cli_vendor": "opencode",
-      "name": "Reference CLI: OpenCode",
-      "harness": "OpenCode",
-      "harness_version": null,
-      "status": "not-conformance-supported",
-      "profiles": {
-        "instructions": "planned",
-        "mcp": "workbench-projection-only",
-        "skills": "planned"
+      "capabilities": {
+        "instructions": "transformed",
+        "instructions.scoped": "projection-only",
+        "skills": "transformed",
+        "mcp.stdio": "transformed",
+        "mcp.remote": "transformed",
+        "mcp.envRef": "transformed"
       },
-      "evidence": "Workbench projection tests only; no version-pinned native-harness black-box run",
+      "evidence": "CLI unit tests only; no version-pinned native-harness black-box run",
       "limitations": [
         "No immutable native harness version is pinned",
         "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
