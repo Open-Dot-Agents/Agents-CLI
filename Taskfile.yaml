@@ -19,6 +19,15 @@ tasks:
       - mkdir -p bin
       - go build -o bin/agents ./cmd/agents
 
+  build:release:
+    desc: Compile a release binary with VERSION embedded
+    requires:
+      vars:
+        - VERSION
+    cmds:
+      - mkdir -p bin
+      - go build -trimpath -ldflags "-X main.version={{.VERSION}}" -o bin/agents ./cmd/agents
+
   install:
     desc: Install the agents binary using Go's configured binary directory
     cmds:
@@ -28,3 +37,9 @@ tasks:
     desc: Run all Go tests
     cmds:
       - go test ./...
+
+  verify:
+    desc: Run CLI release-readiness checks
+    cmds:
+      - go test ./...
+      - go run ./cmd/agents version
