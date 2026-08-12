@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0.0",
+  "updated": "2026-08-12",
+  "adapters": [
+    {
+      "id": "reference-cli-copilot",
+      "reference_cli_vendor": "copilot",
+      "name": "Reference CLI: Copilot",
+      "harness": "GitHub Copilot CLI",
+      "harness_version": null,
+      "status": "not-conformance-supported",
+      "profiles": {
+        "instructions": "cli-projection-only",
+        "mcp": "cli-projection-only",
+        "skills": "cli-projection-only"
+      },
+      "evidence": "CLI unit tests only; no version-pinned native-harness black-box run",
+      "limitations": [
+        "No immutable native harness version is pinned",
+        "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
+      ]
+    },
+    {
+      "id": "reference-cli-codex",
+      "reference_cli_vendor": "codex",
+      "name": "Reference CLI: Codex",
+      "harness": "OpenAI Codex CLI",
+      "harness_version": null,
+      "status": "not-conformance-supported",
+      "profiles": {
+        "instructions": "cli-projection-only",
+        "mcp": "cli-projection-only",
+        "skills": "cli-projection-only"
+      },
+      "evidence": "CLI unit tests only; no version-pinned native-harness black-box run",
+      "limitations": [
+        "No immutable native harness version is pinned",
+        "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
+      ]
+    },
+    {
+      "id": "reference-cli-claude",
+      "reference_cli_vendor": "claude",
+      "name": "Reference CLI: Claude Code",
+      "harness": "Claude Code",
+      "harness_version": null,
+      "status": "not-conformance-supported",
+      "profiles": {
+        "instructions": "planned",
+        "mcp": "planned",
+        "skills": "planned"
+      },
+      "evidence": "No native adapter evidence or black-box run",
+      "limitations": [
+        "No native adapter evidence is recorded",
+        "No immutable native harness version is pinned"
+      ]
+    },
+    {
+      "id": "reference-cli-opencode",
+      "reference_cli_vendor": "opencode",
+      "name": "Reference CLI: OpenCode",
+      "harness": "OpenCode",
+      "harness_version": null,
+      "status": "not-conformance-supported",
+      "profiles": {
+        "instructions": "planned",
+        "mcp": "workbench-projection-only",
+        "skills": "planned"
+      },
+      "evidence": "Workbench projection tests only; no version-pinned native-harness black-box run",
+      "limitations": [
+        "No immutable native harness version is pinned",
+        "No native black-box run covers instruction discovery, MCP startup, or skill discovery"
+      ]
+    }
+  ]
+}

@@ -18,5 +18,5 @@ All notable changes to the reference CLI are documented here.
 ### Notes
 
 - Reference CLI projection tests are not native harness support evidence.
-- All compatibility claims remain governed by the root `compatibility.json`
-  and `COMPATIBILITY.md` files.
+- All compatibility claims remain governed by `compatibility.json`
+  and the root `docs/COMPATIBILITY.md` file.

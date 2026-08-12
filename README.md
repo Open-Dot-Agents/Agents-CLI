@@ -137,7 +137,7 @@ all-profile behavior.
 `agents capabilities --vendor <copilot|codex|claude|opencode>` writes JSON
 with the implemented profiles (`instructions`, `mcp`, and `skills`) and that
 vendor's native repository paths. The status, profile-level status, evidence,
-and limitations match `../compatibility.json`; this command does not create a
+and limitations match `compatibility.json`; this command does not create a
 native-harness conformance claim.
 
 `agents version` prints `agents <version>`. Source builds default to `dev`.
