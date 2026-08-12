@@ -201,8 +201,8 @@ func VendorCapabilities(vendor string) (Capabilities, error) {
 	summary := vendorCompatibility[vendor]
 	paths := map[string]string{
 		"instructions": "AGENTS.md",
-		"mcp":          vendorMCPPath(vendor, "."),
-		"skills":       vendorSkillsPath(vendor, "."),
+		"mcp":          slashPath(vendorMCPPath(vendor, ".")),
+		"skills":       slashPath(vendorSkillsPath(vendor, ".")),
 	}
 	if vendor == "claude" {
 		paths["instructions_bridge"] = "CLAUDE.md"
@@ -968,6 +968,9 @@ func rejectSymlinkPath(path string) error {
 			return fmt.Errorf("inspect managed path %q: %w", current, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
+			if allowedSystemSymlinkAncestor(current) {
+				continue
+			}
 			return fmt.Errorf("refusing managed path %q because %q is a symlink", path, current)
 		}
 		if index < len(components)-1 && !info.IsDir() {
@@ -975,6 +978,22 @@ func rejectSymlinkPath(path string) error {
 		}
 	}
 	return nil
+}
+
+func allowedSystemSymlinkAncestor(path string) bool {
+	tempDirectory, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(path, tempDirectory)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+}
+
+func slashPath(path string) string {
+	return strings.TrimPrefix(filepath.ToSlash(path), "./")
 }
 
 func prepareOverwrite(options WriteOptions, paths ...string) error {

@@ -68,13 +68,14 @@ func RenderChangeSummary(before, after FileSnapshot) string {
 			continue
 		}
 		added, removed := changedLines(beforeData, afterData)
+		displayPath := filepath.ToSlash(path)
 		switch {
 		case !beforeExists:
-			fmt.Fprintf(&builder, "A  %s (+%d)\n", path, added)
+			fmt.Fprintf(&builder, "A  %s (+%d)\n", displayPath, added)
 		case !afterExists:
-			fmt.Fprintf(&builder, "D  %s (-%d)\n", path, removed)
+			fmt.Fprintf(&builder, "D  %s (-%d)\n", displayPath, removed)
 		default:
-			fmt.Fprintf(&builder, "M  %s (+%d -%d)\n", path, added, removed)
+			fmt.Fprintf(&builder, "M  %s (+%d -%d)\n", displayPath, added, removed)
 		}
 	}
 	if builder.Len() == 0 {

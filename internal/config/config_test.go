@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -281,6 +282,9 @@ func TestBackupCreatesDistinctDirectorySnapshots(t *testing.T) {
 }
 
 func TestBackupPreservesRegularFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not report POSIX file permission bits consistently")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "AGENTS.md")
 	writeFixture(t, path, "# Private\n")
