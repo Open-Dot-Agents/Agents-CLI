@@ -43,12 +43,22 @@ agents capabilities --vendor codex
 agents plan --vendor codex --root . --format json
 agents apply --vendor codex --root .
 agents plan --vendor codex --root . --check
+agents sync --vendor all --root .
+agents sync --vendor all --root . --check
 ```
 
 `plan` is read-only. `apply` merges only managed MCP entries, preserves
 unrelated JSON/TOML content, and records generated-entry hashes under
 `.agents/.state/reference-cli/<vendor>.json`. A new unowned name collision or
 a user-modified managed entry fails before any write.
+
+`sync` uses the same projection rules for one vendor or all three stable
+vendors. It plans every selected vendor before it writes a file. If one plan
+fails, it writes no vendor output. If a write fails, it restores all managed
+files to their state before the sync. `sync --check` is read-only and fails
+when a managed projection is stale. Import remains an explicit operation for
+one vendor because native formats can lose portable data and have no safe
+multi-vendor merge order.
 
 Use `--adopt` only for semantically equivalent existing content. Use
 `--force --backup` for an intentional replacement. Writes reject symlink paths and use
@@ -68,6 +78,7 @@ agents capabilities --vendor <copilot|codex|claude>
 agents import --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
 agents plan --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force]
 agents apply --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup]
+agents sync --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup]
 agents version
 ```
 

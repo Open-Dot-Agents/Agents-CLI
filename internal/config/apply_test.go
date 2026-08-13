@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +147,104 @@ func TestClaudeApplyDeletesOnlyUnmodifiedOwnedSkill(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("removed canonical skill left an owned projection: %v", err)
+	}
+}
+
+func TestSyncAllAppliesEveryStableVendorAndBecomesIdempotent(t *testing.T) {
+	root := t.TempDir()
+	writeRepositoryFixtureWithoutSecrets(t, root)
+
+	result, err := ApplySync("all", root, ApplyOptions{})
+	if err != nil || !result.Applicable || len(result.Vendors) != 3 {
+		t.Fatalf("sync all: %#v, %v", result, err)
+	}
+	for _, path := range []string{
+		".github/mcp.json",
+		".codex/config.toml",
+		".mcp.json",
+		".agents/.state/reference-cli/copilot.json",
+		".agents/.state/reference-cli/codex.json",
+		".agents/.state/reference-cli/claude.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
+			t.Fatalf("missing synchronized file %q: %v", path, err)
+		}
+	}
+
+	plan, err := PlanSync("all", root, ApplyOptions{})
+	if err != nil || !plan.Applicable {
+		t.Fatalf("plan synchronized repository: %#v, %v", plan, err)
+	}
+	for _, vendor := range plan.Vendors {
+		for _, action := range vendor.Actions {
+			if action.Operation != "unchanged" {
+				t.Fatalf("sync was not idempotent: %#v", plan)
+			}
+		}
+	}
+}
+
+func TestSyncAllPreflightFailureDoesNotWriteAnotherVendor(t *testing.T) {
+	root := t.TempDir()
+	writeRepositoryFixtureWithoutSecrets(t, root)
+	writeFixture(t, filepath.Join(root, ".codex", "config.toml"), "[mcp_servers.local]\ncommand = 'different'\n")
+
+	result, err := ApplySync("all", root, ApplyOptions{})
+	if err == nil || result.Applicable || !strings.Contains(err.Error(), "codex") {
+		t.Fatalf("expected Codex preflight conflict: %#v, %v", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".github", "mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("Copilot output was written before all-vendor preflight completed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("Claude output was written before all-vendor preflight completed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agents", ".state", "reference-cli", "copilot.json")); !os.IsNotExist(err) {
+		t.Fatalf("ownership state was written after failed preflight: %v", err)
+	}
+}
+
+func TestSyncTransactionRollsBackAfterWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	writeRepositoryFixtureWithoutSecrets(t, root)
+	originalCodex := "# keep\nmodel = 'gpt-test'\n"
+	writeFixture(t, filepath.Join(root, ".codex", "config.toml"), originalCodex)
+	prepared, result, err := prepareSync("all", root, ApplyOptions{})
+	if err != nil || !result.Applicable {
+		t.Fatalf("prepare sync: %#v, %v", result, err)
+	}
+
+	writes := 0
+	failingWriter := func(path string, data []byte, permissions fs.FileMode) error {
+		writes++
+		if writes == 5 {
+			return errors.New("injected write failure")
+		}
+		return atomicWrite(path, data, permissions)
+	}
+	err = applyPreparedProjections(prepared, ApplyOptions{}, failingWriter)
+	if err == nil || !strings.Contains(err.Error(), "injected write failure") {
+		t.Fatalf("expected injected transaction failure, got %v", err)
+	}
+	for _, path := range []string{
+		".github/mcp.json",
+		".mcp.json",
+		".agents/.state/reference-cli/copilot.json",
+		".agents/.state/reference-cli/codex.json",
+		".agents/.state/reference-cli/claude.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); !os.IsNotExist(err) {
+			t.Fatalf("transaction left %q after rollback: %v", path, err)
+		}
+	}
+	codex, err := os.ReadFile(filepath.Join(root, ".codex", "config.toml"))
+	if err != nil || string(codex) != originalCodex {
+		t.Fatalf("transaction did not restore Codex configuration: %q (%v)", codex, err)
+	}
+	for _, path := range []string{".github", ".agents/.state"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); !os.IsNotExist(err) {
+			t.Fatalf("transaction left directory %q after rollback: %v", path, err)
+		}
 	}
 }
 

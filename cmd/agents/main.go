@@ -121,6 +121,52 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("--vendor is required")
 		}
 		return config.ImportRepository(*vendor, *root, *force, *backup)
+	case "sync":
+		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		vendor := flags.String("vendor", "", "destination vendor: all, copilot, codex, or claude")
+		root := flags.String("root", ".", "repository root")
+		format := flags.String("format", "text", "output format: text or json")
+		check := flags.Bool("check", false, "report stale projections without changing files")
+		adopt := flags.Bool("adopt", false, "adopt semantically equivalent unowned entries")
+		force := flags.Bool("force", false, "replace conflicting entries")
+		backup := flags.Bool("backup", false, "back up changed native files (requires --force)")
+		if err := flags.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+		}
+		if *vendor == "" {
+			return errors.New("--vendor is required")
+		}
+		if *format != "text" && *format != "json" {
+			return fmt.Errorf("unsupported format %q", *format)
+		}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup}
+		var result config.SyncResult
+		var err error
+		if *check {
+			result, err = config.PlanSync(*vendor, *root, options)
+		} else {
+			result, err = config.ApplySync(*vendor, *root, options)
+		}
+		if outputErr := writeSync(stdout, result, *format); outputErr != nil {
+			return outputErr
+		}
+		if err != nil {
+			return err
+		}
+		if *check && !result.Applicable {
+			return errors.New("one or more vendor projections are not applicable")
+		}
+		if *check && syncChangesRequired(result) {
+			return errors.New("managed configuration changes are required")
+		}
+		return nil
 	case "plan", "apply":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -149,7 +195,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup}
 		var result config.PlanResult
 		var err error
-		if args[0] == "plan" {
+		if args[0] == "plan" || *check {
 			result, err = config.PlanProjection(*vendor, *root, options)
 		} else {
 			result, err = config.ApplyProjection(*vendor, *root, options)
@@ -200,10 +246,12 @@ func printUsage(w io.Writer) {
   agents import --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
   agents plan --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force]
   agents apply --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup]
+  agents sync --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup]
 
 Root and nested AGENTS.md files are canonical instructions. Portable metadata,
 MCP servers, and skills live below .agents. Plan is read-only. Apply performs
-structural native-file merges and records generated-entry hashes below
+a single-vendor merge. Sync preflights and applies one or all vendors as one
+transaction. Both commands record generated-entry hashes below
 .agents/.state/reference-cli. Conflicts fail unless equivalent content is
 adopted or an explicit forced backup is requested.
 `)
@@ -227,4 +275,37 @@ func writePlan(stdout io.Writer, result config.PlanResult, format string) error 
 		}
 	}
 	return nil
+}
+
+func writeSync(stdout io.Writer, result config.SyncResult, format string) error {
+	if format == "json" {
+		return json.NewEncoder(stdout).Encode(result)
+	}
+	for _, vendor := range result.Vendors {
+		if !vendor.Applicable {
+			for _, diagnostic := range vendor.Diagnostics {
+				if _, err := fmt.Fprintf(stdout, "%s\tdiagnostic\t%s\n", vendor.Vendor, diagnostic); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		for _, action := range vendor.Actions {
+			if _, err := fmt.Fprintf(stdout, "%s\t%s\t%s\n", vendor.Vendor, action.Operation, action.Path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func syncChangesRequired(result config.SyncResult) bool {
+	for _, vendor := range result.Vendors {
+		for _, action := range vendor.Actions {
+			if action.Operation != "unchanged" {
+				return true
+			}
+		}
+	}
+	return false
 }

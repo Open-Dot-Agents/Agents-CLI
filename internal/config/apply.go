@@ -42,6 +42,15 @@ type PlanResult struct {
 	Diagnostics   []string `json:"diagnostics,omitempty"`
 }
 
+// SyncResult is the aggregate plan/apply contract for one or all stable
+// vendor projections.
+type SyncResult struct {
+	SchemaVersion string       `json:"schema_version"`
+	Root          string       `json:"root"`
+	Applicable    bool         `json:"applicable"`
+	Vendors       []PlanResult `json:"vendors"`
+}
+
 type ownershipState struct {
 	Version string            `json:"version"`
 	Vendor  string            `json:"vendor"`
@@ -163,6 +172,33 @@ func PlanProjection(vendor, root string, options ApplyOptions) (PlanResult, erro
 	return prepared.result, nil
 }
 
+// PlanSync computes every requested adapter projection before any file is
+// changed. The vendor selector accepts one stable vendor or "all".
+func PlanSync(vendor, root string, options ApplyOptions) (SyncResult, error) {
+	_, result, err := prepareSync(vendor, root, options)
+	return result, err
+}
+
+// ApplySync applies one or all stable vendor projections as one transaction.
+// Every projection is prepared first. If one projection is not applicable,
+// no managed file is changed.
+func ApplySync(vendor, root string, options ApplyOptions) (SyncResult, error) {
+	if options.Backup && !options.Force {
+		return SyncResult{}, errors.New("--backup requires --force")
+	}
+	prepared, result, err := prepareSync(vendor, root, options)
+	if err != nil {
+		return result, err
+	}
+	if !result.Applicable {
+		return result, syncNotApplicableError(result)
+	}
+	if err := applyPreparedProjections(prepared, options, atomicWrite); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 // ApplyProjection applies a previously describable projection using atomic writes.
 func ApplyProjection(vendor, root string, options ApplyOptions) (PlanResult, error) {
 	if options.Backup && !options.Force {
@@ -175,42 +211,240 @@ func ApplyProjection(vendor, root string, options ApplyOptions) (PlanResult, err
 	if !prepared.result.Applicable {
 		return prepared.result, errors.New(strings.Join(prepared.result.Diagnostics, "; "))
 	}
-	paths := make([]string, 0, len(prepared.writes))
-	for path := range prepared.writes {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	if options.Backup {
-		for _, path := range paths {
-			if err := backupPath(path); err != nil {
-				return PlanResult{}, err
-			}
-		}
-	}
-	for _, path := range paths {
-		if err := atomicWrite(path, prepared.writes[path], 0o644); err != nil {
-			return PlanResult{}, err
-		}
-	}
-	for _, path := range prepared.deletes {
-		if options.Backup {
-			if err := backupPath(path); err != nil {
-				return PlanResult{}, err
-			}
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return PlanResult{}, fmt.Errorf("delete managed output %q: %w", path, err)
-		}
-	}
-	stateData, err := json.MarshalIndent(prepared.state, "", "  ")
-	if err != nil {
-		return PlanResult{}, fmt.Errorf("encode ownership state: %w", err)
-	}
-	statePath := ownershipPath(root, vendor)
-	if err := atomicWrite(statePath, append(stateData, '\n'), 0o644); err != nil {
-		return PlanResult{}, err
+	if err := applyPreparedProjections([]preparedProjection{prepared}, options, atomicWrite); err != nil {
+		return prepared.result, err
 	}
 	return prepared.result, nil
+}
+
+func prepareSync(vendor, root string, options ApplyOptions) ([]preparedProjection, SyncResult, error) {
+	vendors, err := syncVendors(vendor)
+	result := SyncResult{SchemaVersion: ownershipVersion, Root: root, Applicable: true, Vendors: []PlanResult{}}
+	if err != nil {
+		return nil, result, err
+	}
+	prepared := make([]preparedProjection, 0, len(vendors))
+	for _, selected := range vendors {
+		projection, err := prepareProjection(selected, root, options)
+		if err != nil {
+			result.Applicable = false
+			result.Vendors = append(result.Vendors, PlanResult{
+				SchemaVersion: ownershipVersion,
+				Vendor:        selected,
+				Root:          root,
+				Applicable:    false,
+				Actions:       []Action{},
+				Diagnostics:   []string{err.Error()},
+			})
+			return nil, result, fmt.Errorf("plan %s projection: %w", selected, err)
+		}
+		prepared = append(prepared, projection)
+		result.Vendors = append(result.Vendors, projection.result)
+		if !projection.result.Applicable {
+			result.Applicable = false
+		}
+	}
+	return prepared, result, nil
+}
+
+func syncVendors(vendor string) ([]string, error) {
+	if strings.EqualFold(vendor, "all") {
+		return []string{"copilot", "codex", "claude"}, nil
+	}
+	normalized, err := normalizeStableVendor(vendor)
+	if err != nil {
+		return nil, err
+	}
+	return []string{normalized}, nil
+}
+
+func syncNotApplicableError(result SyncResult) error {
+	diagnostics := []string{}
+	for _, vendor := range result.Vendors {
+		for _, diagnostic := range vendor.Diagnostics {
+			diagnostics = append(diagnostics, vendor.Vendor+": "+diagnostic)
+		}
+	}
+	if len(diagnostics) == 0 {
+		return errors.New("one or more vendor projections are not applicable")
+	}
+	return errors.New(strings.Join(diagnostics, "; "))
+}
+
+type managedSnapshot struct {
+	path        string
+	existed     bool
+	data        []byte
+	permissions fs.FileMode
+}
+
+type managedWriter func(string, []byte, fs.FileMode) error
+
+func applyPreparedProjections(prepared []preparedProjection, options ApplyOptions, write managedWriter) error {
+	writes := map[string][]byte{}
+	deletes := map[string]struct{}{}
+	backupTargets := map[string]struct{}{}
+	for _, projection := range prepared {
+		for path, data := range projection.writes {
+			if _, duplicate := writes[path]; duplicate {
+				return fmt.Errorf("duplicate managed output %q", path)
+			}
+			writes[path] = data
+			backupTargets[path] = struct{}{}
+		}
+		for _, path := range projection.deletes {
+			if _, duplicate := deletes[path]; duplicate {
+				return fmt.Errorf("duplicate managed deletion %q", path)
+			}
+			if _, collision := writes[path]; collision {
+				return fmt.Errorf("managed output %q is both written and deleted", path)
+			}
+			deletes[path] = struct{}{}
+			backupTargets[path] = struct{}{}
+		}
+		stateData, err := json.MarshalIndent(projection.state, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode %s ownership state: %w", projection.result.Vendor, err)
+		}
+		statePath := ownershipPath(projection.result.Root, projection.result.Vendor)
+		if _, duplicate := writes[statePath]; duplicate {
+			return fmt.Errorf("duplicate ownership output %q", statePath)
+		}
+		writes[statePath] = append(stateData, '\n')
+	}
+	for path := range deletes {
+		if _, collision := writes[path]; collision {
+			return fmt.Errorf("managed output %q is both written and deleted", path)
+		}
+	}
+
+	mutationPaths := make([]string, 0, len(writes)+len(deletes))
+	for path := range writes {
+		mutationPaths = append(mutationPaths, path)
+	}
+	for path := range deletes {
+		mutationPaths = append(mutationPaths, path)
+	}
+	sort.Strings(mutationPaths)
+	snapshots := make([]managedSnapshot, 0, len(mutationPaths))
+	createdDirectories := map[string]struct{}{}
+	for _, path := range mutationPaths {
+		snapshot, err := snapshotManagedFile(path)
+		if err != nil {
+			return err
+		}
+		snapshots = append(snapshots, snapshot)
+		for _, directory := range missingParentDirectories(path) {
+			createdDirectories[directory] = struct{}{}
+		}
+	}
+
+	if options.Backup {
+		paths := make([]string, 0, len(backupTargets))
+		for path := range backupTargets {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			if err := backupPath(path); err != nil {
+				return err
+			}
+		}
+	}
+
+	writePaths := make([]string, 0, len(writes))
+	for path := range writes {
+		writePaths = append(writePaths, path)
+	}
+	sort.Strings(writePaths)
+	for _, path := range writePaths {
+		if err := write(path, writes[path], 0o644); err != nil {
+			return rollbackManagedFiles(snapshots, createdDirectories, write, fmt.Errorf("write managed output %q: %w", path, err))
+		}
+	}
+	deletePaths := make([]string, 0, len(deletes))
+	for path := range deletes {
+		deletePaths = append(deletePaths, path)
+	}
+	sort.Strings(deletePaths)
+	for _, path := range deletePaths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return rollbackManagedFiles(snapshots, createdDirectories, write, fmt.Errorf("delete managed output %q: %w", path, err))
+		}
+	}
+	return nil
+}
+
+func snapshotManagedFile(path string) (managedSnapshot, error) {
+	snapshot := managedSnapshot{path: path, permissions: 0o644}
+	if err := rejectSymlinkPath(path); err != nil {
+		return snapshot, err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return snapshot, nil
+	}
+	if err != nil {
+		return snapshot, fmt.Errorf("inspect managed output %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return snapshot, fmt.Errorf("managed output %q is not a regular file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return snapshot, fmt.Errorf("read managed output %q: %w", path, err)
+	}
+	snapshot.existed = true
+	snapshot.data = data
+	snapshot.permissions = info.Mode().Perm()
+	return snapshot, nil
+}
+
+func missingParentDirectories(path string) []string {
+	directories := []string{}
+	for directory := filepath.Dir(path); ; directory = filepath.Dir(directory) {
+		_, err := os.Lstat(directory)
+		if err == nil || !errors.Is(err, fs.ErrNotExist) {
+			return directories
+		}
+		directories = append(directories, directory)
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return directories
+		}
+	}
+}
+
+func rollbackManagedFiles(snapshots []managedSnapshot, createdDirectories map[string]struct{}, write managedWriter, cause error) error {
+	rollbackErrors := []string{}
+	for index := len(snapshots) - 1; index >= 0; index-- {
+		snapshot := snapshots[index]
+		if snapshot.existed {
+			if err := write(snapshot.path, snapshot.data, snapshot.permissions); err != nil {
+				rollbackErrors = append(rollbackErrors, err.Error())
+			}
+			continue
+		}
+		if err := os.Remove(snapshot.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			rollbackErrors = append(rollbackErrors, err.Error())
+		}
+	}
+	directories := make([]string, 0, len(createdDirectories))
+	for directory := range createdDirectories {
+		directories = append(directories, directory)
+	}
+	sort.Slice(directories, func(left, right int) bool {
+		return len(directories[left]) > len(directories[right])
+	})
+	for _, directory := range directories {
+		if err := os.Remove(directory); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			rollbackErrors = append(rollbackErrors, err.Error())
+		}
+	}
+	if len(rollbackErrors) > 0 {
+		return fmt.Errorf("%w; rollback failed: %s", cause, strings.Join(rollbackErrors, "; "))
+	}
+	return cause
 }
 
 func prepareProjection(vendor, root string, options ApplyOptions) (preparedProjection, error) {

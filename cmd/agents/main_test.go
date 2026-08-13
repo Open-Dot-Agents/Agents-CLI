@@ -56,6 +56,72 @@ func TestRunApplyRefusesUnsupportedCopilotSecretReference(t *testing.T) {
 	}
 }
 
+func TestRunSyncAllAndReadOnlyCheck(t *testing.T) {
+	root := t.TempDir()
+	withWorkingDirectory(t, root)
+	if err := run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	if err := run([]string{"sync", "--vendor", "all", "--format", "json"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("sync all: %v (%s)", err, stdout.String())
+	}
+	var result struct {
+		Applicable bool `json:"applicable"`
+		Vendors    []struct {
+			Vendor string `json:"vendor"`
+		} `json:"vendors"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || !result.Applicable || len(result.Vendors) != 3 {
+		t.Fatalf("unexpected sync result: %s (%v)", stdout.String(), err)
+	}
+	for _, path := range []string{
+		".github/mcp.json",
+		".codex/config.toml",
+		".mcp.json",
+		".agents/.state/reference-cli/copilot.json",
+		".agents/.state/reference-cli/codex.json",
+		".agents/.state/reference-cli/claude.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
+			t.Fatalf("missing synchronized file %q: %v", path, err)
+		}
+	}
+	if err := run([]string{"sync", "--vendor", "all", "--check"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("idempotent sync check: %v", err)
+	}
+}
+
+func TestRunApplyCheckDoesNotWrite(t *testing.T) {
+	root := t.TempDir()
+	withWorkingDirectory(t, root)
+	if err := run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	err := run([]string{"apply", "--vendor", "codex", "--check"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "changes are required") {
+		t.Fatalf("expected stale projection check, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("apply --check changed the repository: %v", err)
+	}
+}
+
+func TestRunSyncCheckFailsForNonApplicableVendorWithoutWriting(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"secret":{"type":"stdio","command":"server","env":{"TOKEN":"urn:open-dot-agents:env:TOKEN"}}}}`)
+	withWorkingDirectory(t, root)
+	stdout := &bytes.Buffer{}
+	err := run([]string{"sync", "--vendor", "all", "--check"}, stdout, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "not applicable") || !strings.Contains(stdout.String(), "copilot") {
+		t.Fatalf("expected non-applicable sync check, got %v (%s)", err, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("sync --check changed the repository: %v", err)
+	}
+}
+
 func TestRunCapabilitiesWritesJSON(t *testing.T) {
 	for _, vendor := range []string{"copilot", "codex", "claude"} {
 		stdout := &bytes.Buffer{}
