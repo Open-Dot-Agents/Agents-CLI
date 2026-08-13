@@ -10,8 +10,7 @@
       "harness_version": null,
       "status": "not-conformance-supported",
       "profiles": {
-        "instructions": "cli-projection-only",
-        "mcp": "cli-projection-only",
+        "tools": "cli-projection-only",
         "skills": "cli-projection-only"
       },
       "capabilities": {
@@ -37,8 +36,7 @@
       "harness_version": null,
       "status": "not-conformance-supported",
       "profiles": {
-        "instructions": "cli-projection-only",
-        "mcp": "cli-projection-only",
+        "tools": "cli-projection-only",
         "skills": "cli-projection-only"
       },
       "capabilities": {
@@ -64,8 +62,7 @@
       "harness_version": null,
       "status": "not-conformance-supported",
       "profiles": {
-        "instructions": "cli-projection-only",
-        "mcp": "cli-projection-only",
+        "tools": "cli-projection-only",
         "skills": "cli-projection-only"
       },
       "capabilities": {

@@ -248,9 +248,10 @@ func printUsage(w io.Writer) {
   agents apply --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup]
   agents sync --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup]
 
-Root and nested AGENTS.md files are canonical instructions. Portable metadata,
-MCP servers, and skills live below .agents. Plan is read-only. Apply performs
-a single-vendor merge. Sync preflights and applies one or all vendors as one
+Canonical instructions, portable metadata, tools, and skills live below
+.agents. A root AGENTS.md compatibility link and nested AGENTS.md files provide
+native discovery and scoping. Plan is read-only. Apply performs a
+single-vendor merge. Sync preflights and applies one or all vendors as one
 transaction. Both commands record generated-entry hashes below
 .agents/.state/reference-cli. Conflicts fail unless equivalent content is
 adopted or an explicit forced backup is requested.

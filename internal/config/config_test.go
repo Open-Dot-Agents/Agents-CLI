@@ -184,7 +184,7 @@ func TestBackupRejectsSymlinkedPath(t *testing.T) {
 func TestExportHonorsSelectedManifestProfiles(t *testing.T) {
 	source := t.TempDir()
 	agentsRoot := filepath.Join(source, ".agents")
-	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
+	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":[]}`)
 	writeFixture(t, filepath.Join(agentsRoot, "AGENTS.md"), "# Instructions only\n")
 	output := t.TempDir()
 	writeFixture(t, filepath.Join(output, ".github", "mcp.json"), `{"mcpServers":{"keep":{"command":"keep"}}}`)
@@ -314,6 +314,7 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 	}
 	agentsRoot := filepath.Join(root, ".agents")
 	for _, path := range []string{
+		"AGENTS.md",
 		"manifest.json",
 		"tools/mcp.json",
 		"skills/example/SKILL.md",
@@ -327,7 +328,7 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 		t.Fatalf("read starter manifest: %v", err)
 	}
 	if !strings.Contains(string(manifest), `"version": "1.0.0"`) ||
-		!strings.Contains(string(manifest), `"profiles": ["instructions", "mcp", "skills"]`) {
+		!strings.Contains(string(manifest), `"profiles": ["tools", "skills"]`) {
 		t.Fatalf("starter manifest is not interoperable: %s", manifest)
 	}
 	if _, err := readCanonicalMCP(agentsRoot); err != nil {
@@ -335,6 +336,10 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 	}
 	if err := Validate(agentsRoot); err != nil {
 		t.Fatalf("validate starter tree: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(root, "AGENTS.md"))
+	if err != nil || target != ".agents/AGENTS.md" {
+		t.Fatalf("root AGENTS.md is not the canonical compatibility link: %q (%v)", target, err)
 	}
 	if err := Export("copilot", agentsRoot, t.TempDir(), false); err != nil {
 		t.Fatalf("export starter tree: %v", err)
@@ -436,16 +441,9 @@ func TestValidateRejectsInvalidCanonicalStructure(t *testing.T) {
 			wantErr: "urn:open-dot-agents:env",
 		},
 		{
-			name: "empty manifest profiles",
-			mutate: func(t *testing.T, agentsRoot string) {
-				writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":[]}`)
-			},
-			wantErr: "at least one profile",
-		},
-		{
 			name: "duplicate manifest profile",
 			mutate: func(t *testing.T, agentsRoot string) {
-				writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":["mcp","mcp"]}`)
+				writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":["tools","tools"]}`)
 			},
 			wantErr: "duplicate profile",
 		},
@@ -491,7 +489,7 @@ func TestValidateAllowsCompatibleManifestAndEnvironmentReferences(t *testing.T) 
 	agentsRoot := filepath.Join(root, ".agents")
 	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{
   "version": "1.0.0",
-  "profiles": ["mcp"],
+  "profiles": ["tools"],
   "future_field": {"enabled": true}
 }`)
 	writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{
@@ -517,14 +515,14 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 	}{
 		{
 			name:     "MCP only",
-			profiles: `["mcp"]`,
+			profiles: `["tools"]`,
 			setup: func(t *testing.T, agentsRoot string) {
 				writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{"mcpServers":{}}`)
 			},
 		},
 		{
 			name:     "instructions only",
-			profiles: `["instructions"]`,
+			profiles: `[]`,
 			setup:    func(t *testing.T, agentsRoot string) {},
 		},
 	}
@@ -533,6 +531,7 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			agentsRoot := t.TempDir()
 			writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":`+test.profiles+`}`)
+			writeFixture(t, filepath.Join(agentsRoot, "AGENTS.md"), "# Instructions\n")
 			test.setup(t, agentsRoot)
 			if err := Validate(agentsRoot); err != nil {
 				t.Fatalf("validate selected profiles: %v", err)
@@ -541,8 +540,9 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 	}
 }
 
-func TestValidateLegacyTreeDoesNotRequireDuplicateInstructions(t *testing.T) {
+func TestValidateLegacyTreeRequiresCanonicalInstructions(t *testing.T) {
 	agentsRoot := t.TempDir()
+	writeFixture(t, filepath.Join(agentsRoot, "AGENTS.md"), "# Instructions\n")
 	writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{"mcpServers":{}}`)
 	writeFixture(t, filepath.Join(agentsRoot, "skills", "review", "SKILL.md"), "# Review\n")
 
@@ -553,8 +553,8 @@ func TestValidateLegacyTreeDoesNotRequireDuplicateInstructions(t *testing.T) {
 
 func TestValidateRejectsNonRegularRootInstructions(t *testing.T) {
 	agentsRoot := t.TempDir()
-	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
-	if err := os.Mkdir(filepath.Join(filepath.Dir(agentsRoot), "AGENTS.md"), 0o755); err != nil {
+	writeFixture(t, filepath.Join(agentsRoot, "manifest.json"), `{"version":"1.0.0","profiles":[]}`)
+	if err := os.Mkdir(filepath.Join(agentsRoot, "AGENTS.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -564,13 +564,15 @@ func TestValidateRejectsNonRegularRootInstructions(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsDuplicateAgentsInstructions(t *testing.T) {
+func TestValidateAcceptsRootCompatibilityLink(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["instructions"]}`)
-	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Duplicate\n")
-	err := Validate(filepath.Join(root, ".agents"))
-	if err == nil || !strings.Contains(err.Error(), "duplicate .agents/AGENTS.md") {
-		t.Fatalf("expected duplicate instruction error, got %v", err)
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":[]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Canonical\n")
+	if err := os.Symlink(".agents/AGENTS.md", filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(filepath.Join(root, ".agents")); err != nil {
+		t.Fatalf("validate root compatibility link: %v", err)
 	}
 }
 
@@ -636,17 +638,14 @@ func TestExportAndImportClaudeProjectsBridgeAndSkills(t *testing.T) {
 	}
 }
 
-func TestImportClaudeDoesNotParseCLAUDEAsInstructions(t *testing.T) {
+func TestImportClaudeRequiresPortableInstructions(t *testing.T) {
 	claude := t.TempDir()
 	writeFixture(t, filepath.Join(claude, ".mcp.json"), `{"mcpServers":{}}`)
 	writeFixture(t, filepath.Join(claude, "CLAUDE.md"), "arbitrary Claude content\n")
 	imported := t.TempDir()
 
-	if err := Import("claude", claude, filepath.Join(imported, ".agents"), false); err != nil {
-		t.Fatalf("import Claude without AGENTS.md: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(imported, ".agents", "AGENTS.md")); !os.IsNotExist(err) {
-		t.Fatalf("CLAUDE.md was imported as canonical instructions: %v", err)
+	if err := Import("claude", claude, filepath.Join(imported, ".agents"), false); err == nil || !strings.Contains(err.Error(), "AGENTS.md") {
+		t.Fatalf("expected missing portable instructions error, got %v", err)
 	}
 }
 
@@ -742,6 +741,7 @@ func TestOpenCodeProjectionPreservesTopLevelFields(t *testing.T) {
 
 func TestOpenCodeEnabledServerIsRepresentable(t *testing.T) {
 	openCode := t.TempDir()
+	writeFixture(t, filepath.Join(openCode, "AGENTS.md"), "# Instructions\n")
 	writeFixture(t, filepath.Join(openCode, "opencode.json"), `{"mcp":{"local":{"type":"local","command":["run"],"enabled":true}}}`)
 	imported := t.TempDir()
 	if err := Import("opencode", openCode, filepath.Join(imported, ".agents"), false); err != nil {
@@ -799,14 +799,14 @@ func TestVendorCapabilities(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read capabilities: %v", err)
 			}
-			if capabilities.Vendor != test.vendor || capabilities.Status != "not-conformance-supported" || capabilities.Paths["mcp"] != test.mcpPath ||
-				capabilities.Paths["instructions"] != "AGENTS.md" || capabilities.Paths["skills"] != test.skills {
+			if capabilities.Vendor != test.vendor || capabilities.Status != "not-conformance-supported" || capabilities.Paths["tools"] != test.mcpPath ||
+				capabilities.Paths["instructions"] != "AGENTS.md" || capabilities.Paths["instructions_source"] != ".agents/AGENTS.md" || capabilities.Paths["skills"] != test.skills {
 				t.Fatalf("unexpected capabilities: %#v", capabilities)
 			}
-			if capabilities.ProfileStatus["mcp"] != test.mcpStatus || capabilities.Evidence == "" {
+			if capabilities.ProfileStatus["tools"] != test.mcpStatus || capabilities.Evidence == "" {
 				t.Fatalf("unexpected compatibility summary: %#v", capabilities)
 			}
-			if strings.Join(capabilities.Profiles, ",") != "instructions,mcp,skills" {
+			if strings.Join(capabilities.Profiles, ",") != "tools,skills" {
 				t.Fatalf("unexpected profiles: %#v", capabilities.Profiles)
 			}
 			if test.vendor == "claude" && capabilities.Paths["instructions_bridge"] != "CLAUDE.md" {

@@ -35,7 +35,8 @@ func TestCodexApplyPreservesUnrelatedTOMLAndTranslatesReferences(t *testing.T) {
 
 func TestCodexRefusesEnvironmentRename(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools"]}`)
 	writeFixture(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server","env":{"TARGET":"urn:open-dot-agents:env:SOURCE"}}}}`)
 	plan, err := PlanProjection("codex", root, ApplyOptions{})
 	if err != nil {
@@ -250,8 +251,11 @@ func TestSyncTransactionRollsBackAfterWriteFailure(t *testing.T) {
 
 func writeRepositoryFixture(t *testing.T, root string) {
 	t.Helper()
-	writeFixture(t, filepath.Join(root, "AGENTS.md"), "# Instructions\n")
-	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["instructions","mcp","skills"]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	if err := os.Symlink(".agents/AGENTS.md", filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools","skills"]}`)
 	writeFixture(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{
   "mcpServers": {
     "local": {"type":"stdio","command":"server","env":{"TOKEN":"urn:open-dot-agents:env:TOKEN"}},
@@ -263,6 +267,10 @@ func writeRepositoryFixture(t *testing.T, root string) {
 
 func writeRepositoryFixtureWithoutSecrets(t *testing.T, root string) {
 	t.Helper()
-	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	if err := os.Symlink(".agents/AGENTS.md", filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools"]}`)
 	writeFixture(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"}}}`)
 }

@@ -1,7 +1,7 @@
 # Agents CLI
 
 `agents` is the Go reference implementation of Open-Dot-Agents 1.0. It
-validates repository configuration and projects the portable MCP and skills
+validates repository configuration and projects the portable tools and skills
 profiles into native harness files without treating those files as a second
 source of truth.
 
@@ -11,17 +11,19 @@ conservative claims as the public compatibility registry.
 ## Portable repository
 
 ```text
-AGENTS.md
-packages/api/AGENTS.md
 .agents/
+  AGENTS.md
   manifest.json
   tools/mcp.json
   skills/<skill>/SKILL.md
+AGENTS.md -> .agents/AGENTS.md
+packages/api/AGENTS.md
 ```
 
-Root and nested `AGENTS.md` files are used directly. Copilot CLI and Codex also
-use `.agents/skills` directly. Claude Code receives an owned `CLAUDE.md` import
-bridge and an owned `.claude/skills` projection.
+Canonical instructions live in `.agents/AGENTS.md`; a root compatibility link
+and nested `AGENTS.md` files provide native scoped discovery. Copilot CLI and
+Codex also use `.agents/skills` directly. Claude Code receives an owned
+`CLAUDE.md` import bridge and an owned `.claude/skills` projection.
 
 ## Build and test
 

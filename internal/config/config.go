@@ -24,7 +24,7 @@ const (
 	manifestStarter = `{
   "$schema": "https://raw.githubusercontent.com/Open-Dot-Agents/Agents-Spec/v1.0.0/spec/1.0/schemas/manifest.schema.json",
   "version": "` + manifestVersion + `",
-  "profiles": ["instructions", "mcp", "skills"]
+  "profiles": ["tools", "skills"]
 }
 `
 )
@@ -104,9 +104,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 		Harness: "GitHub Copilot CLI",
 		Status:  "not-conformance-supported",
 		ProfileStatus: map[string]string{
-			"instructions": "cli-projection-only",
-			"mcp":          "cli-projection-only",
-			"skills":       "cli-projection-only",
+			"tools":  "cli-projection-only",
+			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "unsupported"},
 		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
@@ -121,9 +120,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 		Harness: "OpenAI Codex CLI",
 		Status:  "not-conformance-supported",
 		ProfileStatus: map[string]string{
-			"instructions": "cli-projection-only",
-			"mcp":          "cli-projection-only",
-			"skills":       "cli-projection-only",
+			"tools":  "cli-projection-only",
+			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "transformed"},
 		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
@@ -138,9 +136,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 		Harness: "Claude Code",
 		Status:  "not-conformance-supported",
 		ProfileStatus: map[string]string{
-			"instructions": "cli-projection-only",
-			"mcp":          "cli-projection-only",
-			"skills":       "cli-projection-only",
+			"tools":  "cli-projection-only",
+			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "transformed", "instructions.scoped": "projection-only", "skills": "transformed", "mcp.stdio": "transformed", "mcp.remote": "transformed", "mcp.envRef": "transformed"},
 		Evidence:         "CLI unit tests only; no version-pinned native-harness black-box run",
@@ -154,9 +151,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 		Harness: "OpenCode",
 		Status:  "not-conformance-supported",
 		ProfileStatus: map[string]string{
-			"instructions": "planned",
-			"mcp":          "workbench-projection-only",
-			"skills":       "planned",
+			"tools":  "workbench-projection-only",
+			"skills": "planned",
 		},
 		Evidence: "Workbench projection tests only; no version-pinned native-harness black-box run",
 		Limitations: []string{
@@ -182,6 +178,10 @@ func Init(root string, force bool) error {
 
 	stubs := map[string]string{
 		"manifest.json": manifestStarter,
+		"AGENTS.md": `# Repository Agent Instructions
+
+Add shared instructions for every agent working in this repository.
+`,
 		"tools/mcp.json": `{
   "mcpServers": {}
 }
@@ -196,10 +196,32 @@ Describe when this skill applies and the steps an agent should follow.
 			return err
 		}
 	}
-	return writeFile(filepath.Join(root, "AGENTS.md"), []byte(`# Repository Agent Instructions
+	return ensureRootInstructionsLink(root, force)
+}
 
-Add shared instructions for every agent working in this repository.
-`), force)
+func ensureRootInstructionsLink(root string, force bool) error {
+	path := filepath.Join(root, "AGENTS.md")
+	if target, err := os.Readlink(path); err == nil {
+		if target == filepath.ToSlash(filepath.Join(".agents", "AGENTS.md")) {
+			return nil
+		}
+		if !force {
+			return fmt.Errorf("refusing to overwrite %q without --force", path)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		if !force {
+			return fmt.Errorf("refusing to overwrite %q without --force", path)
+		}
+	}
+	if force {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("replace root instruction link %q: %w", path, err)
+		}
+	}
+	if err := os.Symlink(filepath.ToSlash(filepath.Join(".agents", "AGENTS.md")), path); err != nil {
+		return fmt.Errorf("create root instruction link %q: %w", path, err)
+	}
+	return nil
 }
 
 // VendorCapabilities reports the configuration profiles and paths supported for vendor.
@@ -210,9 +232,10 @@ func VendorCapabilities(vendor string) (Capabilities, error) {
 	}
 	summary := vendorCompatibility[vendor]
 	paths := map[string]string{
-		"instructions": "AGENTS.md",
-		"mcp":          slashPath(vendorMCPPath(vendor, ".")),
-		"skills":       slashPath(vendorSkillsPath(vendor, ".")),
+		"instructions":        "AGENTS.md",
+		"instructions_source": ".agents/AGENTS.md",
+		"tools":               slashPath(vendorMCPPath(vendor, ".")),
+		"skills":              slashPath(vendorSkillsPath(vendor, ".")),
 	}
 	if vendor == "claude" {
 		paths["instructions_bridge"] = "CLAUDE.md"
@@ -223,7 +246,7 @@ func VendorCapabilities(vendor string) (Capabilities, error) {
 		Harness:          summary.Harness,
 		HarnessVersion:   summary.HarnessVersion,
 		Status:           summary.Status,
-		Profiles:         []string{"instructions", "mcp", "skills"},
+		Profiles:         []string{"tools", "skills"},
 		ProfileStatus:    summary.ProfileStatus,
 		CapabilityStatus: summary.CapabilityStatus,
 		Paths:            paths,
@@ -260,43 +283,49 @@ func Validate(root string) error {
 			selected[profile] = true
 		}
 	} else {
-		selected["instructions"] = true
-		selected["mcp"] = true
+		selected["tools"] = true
 		selected["skills"] = true
 	}
-	if selected["instructions"] {
-		repositoryRoot := filepath.Dir(root)
-		if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); err == nil {
-			return errors.New("duplicate .agents/AGENTS.md is not part of the 1.0 portable contract")
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
+	if err := requireRegularFile(filepath.Join(root, "AGENTS.md"), "canonical instructions"); err != nil {
+		return err
+	}
+	repositoryRoot := filepath.Dir(root)
+	if err := filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		if err := filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".state") {
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".state" || path == root) {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() && path != repositoryRoot {
+			if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
 				return filepath.SkipDir
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return err
 			}
-			if entry.IsDir() && path != repositoryRoot {
-				if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
-					return filepath.SkipDir
-				} else if !errors.Is(err, fs.ErrNotExist) {
-					return err
-				}
+		}
+		if entry.Name() != "AGENTS.md" {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 && path == filepath.Join(repositoryRoot, "AGENTS.md") {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("resolve root instruction link %q: %w", path, err)
 			}
-			if entry.Name() != "AGENTS.md" {
-				return nil
-			}
-			if !entry.Type().IsRegular() {
-				return fmt.Errorf("canonical instructions %q are not a regular file", path)
+			canonical, err := filepath.EvalSymlinks(filepath.Join(root, "AGENTS.md"))
+			if err != nil || resolved != canonical {
+				return fmt.Errorf("root AGENTS.md must link to .agents/AGENTS.md")
 			}
 			return nil
-		}); err != nil {
-			return err
 		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("canonical instructions %q are not a regular file", path)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if selected["mcp"] {
+	if selected["tools"] {
 		if err := validateCanonicalMCPFile(filepath.Join(root, "tools", "mcp.json"), hasManifest); err != nil {
 			return err
 		}
@@ -356,7 +385,7 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 		return err
 	}
 	var servers map[string]MCPServer
-	if profiles["mcp"] {
+	if profiles["tools"] {
 		servers, err = readCanonicalMCP(source)
 		if err != nil {
 			return err
@@ -365,7 +394,7 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 	if err := prepareOverwrite(options, vendorManagedPathsForProfiles(vendor, output, profiles)...); err != nil {
 		return err
 	}
-	if profiles["mcp"] {
+	if profiles["tools"] {
 		if err := writeVendorMCP(vendor, output, servers, options.Force); err != nil {
 			return err
 		}
@@ -375,13 +404,10 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 			return err
 		}
 	}
-	if profiles["instructions"] {
-		if err := copyInstructions(filepath.Join(source, "AGENTS.md"), filepath.Join(output, "AGENTS.md"), options.Force); err != nil {
-			return err
-		}
-		return writeClaudeBridge(vendor, filepath.Join(source, "AGENTS.md"), output, options.Force)
+	if err := copyInstructions(filepath.Join(source, "AGENTS.md"), filepath.Join(output, "AGENTS.md"), options.Force); err != nil {
+		return err
 	}
-	return nil
+	return writeClaudeBridge(vendor, filepath.Join(source, "AGENTS.md"), output, options.Force)
 }
 
 func Convert(from, to, source, output string, force bool) error {
@@ -598,15 +624,14 @@ func vendorSkillsPath(vendor, root string) string {
 
 func vendorManagedPaths(vendor, root string) []string {
 	return vendorManagedPathsForProfiles(vendor, root, map[string]bool{
-		"instructions": true,
-		"mcp":          true,
-		"skills":       true,
+		"tools":  true,
+		"skills": true,
 	})
 }
 
 func vendorManagedPathsForProfiles(vendor, root string, profiles map[string]bool) []string {
 	paths := make([]string, 0, 4)
-	if profiles["mcp"] {
+	if profiles["tools"] {
 		switch vendor {
 		case "copilot":
 			paths = append(paths, filepath.Join(root, ".github"))
@@ -625,11 +650,9 @@ func vendorManagedPathsForProfiles(vendor, root string, profiles map[string]bool
 			paths = append(paths, filepath.Join(root, ".agents"))
 		}
 	}
-	if profiles["instructions"] {
-		paths = append(paths, filepath.Join(root, "AGENTS.md"))
-		if vendor == "claude" {
-			paths = append(paths, filepath.Join(root, "CLAUDE.md"))
-		}
+	paths = append(paths, filepath.Join(root, "AGENTS.md"))
+	if vendor == "claude" {
+		paths = append(paths, filepath.Join(root, "CLAUDE.md"))
 	}
 	return paths
 }
@@ -639,16 +662,15 @@ func canonicalProfiles(root string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	selected := make(map[string]bool, len(profiles))
+	selected := map[string]bool{"instructions": true}
 	if !hasManifest {
-		selected["instructions"] = true
-		selected["mcp"] = true
+		selected["tools"] = true
 		selected["skills"] = true
 		return selected, nil
 	}
 	for _, profile := range profiles {
 		switch profile {
-		case "instructions", "mcp", "skills":
+		case "tools", "skills":
 			selected[profile] = true
 		}
 	}
@@ -1207,7 +1229,7 @@ func copyInstructions(source, output string, force bool) error {
 	}
 	info, err := os.Lstat(source)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return fmt.Errorf("canonical instructions source %q does not exist", source)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect instructions source %q: %w", source, err)
@@ -1254,9 +1276,6 @@ func validateManifest(path string) ([]string, bool, error) {
 	if manifest.Profiles == nil {
 		return nil, true, fmt.Errorf("manifest %q must define profiles", path)
 	}
-	if len(manifest.Profiles) == 0 {
-		return nil, true, fmt.Errorf("manifest %q must define at least one profile", path)
-	}
 	seenProfiles := make(map[string]struct{}, len(manifest.Profiles))
 	for _, profile := range manifest.Profiles {
 		if !isPortableProfileName(profile) {
@@ -1265,7 +1284,7 @@ func validateManifest(path string) ([]string, bool, error) {
 		if _, seen := seenProfiles[profile]; seen {
 			return nil, true, fmt.Errorf("manifest %q has duplicate profile %q", path, profile)
 		}
-		if profile != "instructions" && profile != "mcp" && profile != "skills" {
+		if profile != "tools" && profile != "skills" {
 			return nil, true, fmt.Errorf("manifest %q has unsupported 1.0 profile %q", path, profile)
 		}
 		seenProfiles[profile] = struct{}{}

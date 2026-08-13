@@ -65,8 +65,7 @@ type preparedProjection struct {
 	state   ownershipState
 }
 
-// ImportRepository imports portable native configuration into root without
-// duplicating root AGENTS.md.
+// ImportRepository imports native configuration into the canonical .agents tree.
 func ImportRepository(vendor, root string, force, backup bool) error {
 	vendor, err := normalizeStableVendor(vendor)
 	if err != nil {
@@ -96,7 +95,15 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 		}
 	}
 	agentsRoot := filepath.Join(root, ".agents")
-	managed := []string{filepath.Join(agentsRoot, "manifest.json"), filepath.Join(agentsRoot, "tools", "mcp.json")}
+	instructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		return fmt.Errorf("read repository instructions: %w", err)
+	}
+	managed := []string{
+		filepath.Join(agentsRoot, "AGENTS.md"),
+		filepath.Join(agentsRoot, "manifest.json"),
+		filepath.Join(agentsRoot, "tools", "mcp.json"),
+	}
 	if !force {
 		for _, path := range managed {
 			if _, err := os.Lstat(path); err == nil {
@@ -113,10 +120,7 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 			}
 		}
 	}
-	profiles := []string{"mcp"}
-	if info, err := os.Lstat(filepath.Join(root, "AGENTS.md")); err == nil && info.Mode().IsRegular() {
-		profiles = append([]string{"instructions"}, profiles...)
-	}
+	profiles := []string{"tools"}
 	if info, err := os.Lstat(vendorSkillsPath(vendor, root)); err == nil && info.IsDir() {
 		profiles = append(profiles, "skills")
 		if vendor == "claude" {
@@ -126,6 +130,9 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 		}
 	}
 	manifest, _ := json.MarshalIndent(map[string]any{"version": manifestVersion, "profiles": profiles}, "", "  ")
+	if err := atomicWrite(filepath.Join(agentsRoot, "AGENTS.md"), instructions, 0o644); err != nil {
+		return err
+	}
 	if err := atomicWrite(filepath.Join(agentsRoot, "manifest.json"), append(manifest, '\n'), 0o644); err != nil {
 		return err
 	}
@@ -473,7 +480,7 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 	next := ownershipState{Version: ownershipVersion, Vendor: vendor, Entries: map[string]string{}, Files: map[string]string{}}
 	deletes := []string{}
 
-	if selected["mcp"] {
+	if selected["tools"] {
 		servers, err := readCanonicalMCP(agentsRoot)
 		if err != nil {
 			return preparedProjection{}, err
@@ -511,7 +518,7 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		}
 	}
 
-	if selected["instructions"] && vendor == "claude" {
+	if vendor == "claude" {
 		bridgeWrites, hashes, err := prepareClaudeBridges(root, state, options)
 		if err != nil {
 			result.Applicable = false
@@ -856,7 +863,7 @@ func prepareClaudeBridges(root string, state ownershipState, options ApplyOption
 		if entry.Name() != "AGENTS.md" {
 			return nil
 		}
-		if !entry.Type().IsRegular() {
+		if !entry.Type().IsRegular() && path != filepath.Join(root, "AGENTS.md") {
 			return fmt.Errorf("unsupported non-regular instruction file %q", path)
 		}
 		destination := filepath.Join(filepath.Dir(path), "CLAUDE.md")

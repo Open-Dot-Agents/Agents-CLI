@@ -43,17 +43,17 @@ def title_profile(value: str) -> str:
 
 def render_table(data: dict[str, Any]) -> str:
     lines = [
-        "| Adapter | Harness version | Instructions | MCP | Skills | Status | Evidence |",
+        "| Adapter | Harness version | Instructions | Tools | Skills | Status | Evidence |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for adapter in data["adapters"]:
         profiles = adapter.get("profiles", {})
         lines.append(
-            "| {name} | {version} | {instructions} | {mcp} | {skills} | {status} | {evidence} |".format(
+            "| {name} | {version} | {instructions} | {tools} | {skills} | {status} | {evidence} |".format(
                 name=adapter["name"],
                 version=adapter.get("harness_version") or "Not pinned",
-                instructions=title_profile(profiles.get("instructions", "unknown")),
-                mcp=title_profile(profiles.get("mcp", "unknown")),
+                instructions=title_profile(adapter.get("capabilities", {}).get("instructions", "unknown")),
+                tools=title_profile(profiles.get("tools", "unknown")),
                 skills=title_profile(profiles.get("skills", "unknown")),
                 status=title_status(adapter["status"]),
                 evidence=adapter["evidence"],

@@ -7,7 +7,7 @@ All notable changes to the reference CLI are documented here.
 ### Added
 
 - `agents init`, `validate`, `capabilities`, `import`, `export`, and `convert`.
-- Projection support for instructions, MCP, and skills across the current
+- Projection support for instructions, tools, and skills across the current
   reference targets while keeping native harness support claims conservative.
 - Manifest-profile-aware exports that leave unselected native configuration
   untouched.
@@ -18,8 +18,8 @@ All notable changes to the reference CLI are documented here.
 ### Notes
 
 - Reference CLI projection tests are not native harness support evidence.
-- Root and nested `AGENTS.md` are used directly instead of copying a second
-  canonical instruction file under `.agents`.
+- `.agents/AGENTS.md` is the canonical instruction file; root compatibility
+  links and nested `AGENTS.md` files preserve native discovery and scoping.
 - `plan` and `apply` replace whole-file export and direct vendor conversion.
   They merge owned MCP entries, preserve unrelated configuration, detect
   drift, and record hashes under `.agents/.state/reference-cli`.

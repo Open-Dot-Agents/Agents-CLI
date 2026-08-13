@@ -43,7 +43,8 @@ func TestRunInitValidateAndPlanApply(t *testing.T) {
 
 func TestRunApplyRefusesUnsupportedCopilotSecretReference(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools"]}`)
 	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"secret":{"type":"stdio","command":"server","env":{"TOKEN":"urn:open-dot-agents:env:TOKEN"}}}}`)
 	withWorkingDirectory(t, root)
 	stdout := &bytes.Buffer{}
@@ -109,7 +110,8 @@ func TestRunApplyCheckDoesNotWrite(t *testing.T) {
 
 func TestRunSyncCheckFailsForNonApplicableVendorWithoutWriting(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["mcp"]}`)
+	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools"]}`)
 	writeFile(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"secret":{"type":"stdio","command":"server","env":{"TOKEN":"urn:open-dot-agents:env:TOKEN"}}}}`)
 	withWorkingDirectory(t, root)
 	stdout := &bytes.Buffer{}
