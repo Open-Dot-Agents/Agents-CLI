@@ -1,9 +1,9 @@
 # Agents CLI
 
 `agents` is the Go reference implementation of Open-Dot-Agents 1.0. It
-validates repository configuration and projects the portable tools and skills
-profiles into native harness files without treating those files as a second
-source of truth.
+validates repository configuration and projects the portable tools, hooks, and
+skills profiles into native harness files without treating those files as a
+second source of truth.
 
 No adapter is conformance-supported yet. `capabilities` reports the same
 conservative claims as the public compatibility registry.
@@ -15,6 +15,7 @@ conservative claims as the public compatibility registry.
   AGENTS.md
   manifest.json
   tools/mcp.json
+  hooks/hooks.json
   skills/<skill>/SKILL.md
 AGENTS.md -> .agents/AGENTS.md
 packages/api/AGENTS.md
@@ -22,8 +23,10 @@ packages/api/AGENTS.md
 
 Canonical instructions live in `.agents/AGENTS.md`; a root compatibility link
 and nested `AGENTS.md` files provide native scoped discovery. Copilot CLI and
-Codex also use `.agents/skills` directly. Claude Code receives an owned
-`CLAUDE.md` import bridge and an owned `.claude/skills` projection.
+Codex also use `.agents/skills` directly. Hook catalogues project to
+`.github/hooks/open-dot-agents.json`, `.codex/hooks.json`, or the `hooks`
+field in `.claude/settings.json`. Claude Code receives an owned `CLAUDE.md`
+import bridge and an owned `.claude/skills` projection.
 
 ## Build and test
 
@@ -86,3 +89,19 @@ agents version
 
 OpenCode remains a Workbench experiment and is not part of the stable CLI
 surface.
+
+## Command hook workflow
+
+See the [complete hook example](https://github.com/Open-Dot-Agents/Agents-Spec/tree/main/examples/hooks)
+for validation, preview, application, and removal. Hook-only native repositories
+can be imported without an MCP file.
+
+The CLI refuses ignored matchers with `ODA-HOOK-0002`. Omitted or zero
+`timeoutSec` uses the native default. Native matcher engines and event payloads
+are not normalized.
+
+`disableAllHooks: true` is projected for Copilot only. Codex and Claude fail
+before writes with `ODA-HOOK-0001`; a failed apply leaves any earlier native
+hooks active. To remove owned hooks, remove `hooks` from the manifest profiles
+and apply. Claude keeps unrelated settings and tracks only the owned `hooks`
+field. Changing unrelated settings does not cause an ownership conflict.

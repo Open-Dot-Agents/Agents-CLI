@@ -134,6 +134,78 @@ func TestClaudeProjectionUsesExpansionAndOwnedBridge(t *testing.T) {
 	}
 }
 
+func TestHookProjectionTargetsStableVendors(t *testing.T) {
+	for _, test := range []struct {
+		vendor   string
+		path     string
+		expected []string
+	}{
+		{
+			vendor: "copilot",
+			path:   ".github/hooks/open-dot-agents.json",
+			expected: []string{
+				`"version": 1`,
+				`"sessionStart"`,
+				`"preToolUse"`,
+				`"timeoutSec": 5`,
+			},
+		},
+		{
+			vendor: "codex",
+			path:   ".codex/hooks.json",
+			expected: []string{
+				`"SessionStart"`,
+				`"PreToolUse"`,
+				`"timeout": 5`,
+			},
+		},
+		{
+			vendor: "claude",
+			path:   ".claude/settings.json",
+			expected: []string{
+				`"theme": "dark"`,
+				`"SessionStart"`,
+				`"PreToolUse"`,
+				`"timeout": 5`,
+			},
+		},
+	} {
+		t.Run(test.vendor, func(t *testing.T) {
+			root := t.TempDir()
+			writeHookRepositoryFixture(t, root)
+			if test.vendor == "claude" {
+				writeFixture(t, filepath.Join(root, ".claude", "settings.json"), `{"theme":"dark"}`)
+			}
+			result, err := ApplyProjection(test.vendor, root, ApplyOptions{})
+			if err != nil || !result.Applicable {
+				t.Fatalf("apply %s hooks: %#v, %v", test.vendor, result, err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(test.path)))
+			if err != nil {
+				t.Fatalf("read projected hooks: %v", err)
+			}
+			for _, expected := range test.expected {
+				if !strings.Contains(string(data), expected) {
+					t.Fatalf("missing %q in %s:\n%s", expected, test.path, data)
+				}
+			}
+		})
+	}
+}
+
+func TestHookProjectionRefusesUnownedClaudeHooks(t *testing.T) {
+	root := t.TempDir()
+	writeHookRepositoryFixture(t, root)
+	writeFixture(t, filepath.Join(root, ".claude", "settings.json"), `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"custom"}]}]}}`)
+	plan, err := PlanProjection("claude", root, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Applicable || len(plan.Diagnostics) == 0 {
+		t.Fatalf("unowned Claude hooks were accepted: %#v", plan)
+	}
+}
+
 func TestClaudeApplyDeletesOnlyUnmodifiedOwnedSkill(t *testing.T) {
 	root := t.TempDir()
 	writeRepositoryFixture(t, root)
@@ -273,4 +345,33 @@ func writeRepositoryFixtureWithoutSecrets(t *testing.T, root string) {
 	}
 	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["tools"]}`)
 	writeFixture(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"}}}`)
+}
+
+func writeHookRepositoryFixture(t *testing.T, root string) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, ".agents", "AGENTS.md"), "# Instructions\n")
+	if err := os.Symlink(".agents/AGENTS.md", filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.0.0","profiles":["hooks"]}`)
+	writeFixture(t, filepath.Join(root, ".agents", "hooks", "hooks.json"), `{
+  "description": "Portable hook fixture",
+  "hooks": {
+    "SessionStart": [
+      {
+          "hooks": [
+          {"type":"command","command":".agents/hooks/scripts/session-start.sh","timeoutSec":5}
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {"type":"command","command":".agents/hooks/scripts/pre-tool-use.sh"}
+        ]
+      }
+    ]
+  }
+}`)
 }

@@ -52,10 +52,11 @@ type SyncResult struct {
 }
 
 type ownershipState struct {
-	Version string            `json:"version"`
-	Vendor  string            `json:"vendor"`
-	Entries map[string]string `json:"entries"`
-	Files   map[string]string `json:"files,omitempty"`
+	Version   string            `json:"version"`
+	Vendor    string            `json:"vendor"`
+	Entries   map[string]string `json:"entries"`
+	Files     map[string]string `json:"files,omitempty"`
+	HooksHash string            `json:"hooks_hash,omitempty"`
 }
 
 type preparedProjection struct {
@@ -74,10 +75,19 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 	if backup && !force {
 		return errors.New("--backup requires --force")
 	}
-	servers, err := readVendorMCP(vendor, root)
+	hooks, hasHooks, err := readVendorHooks(vendor, root)
 	if err != nil {
 		return err
 	}
+	servers, err := readVendorMCP(vendor, root)
+	hasTools := err == nil
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) || !hasHooks {
+			return err
+		}
+		servers = map[string]MCPServer{}
+	}
+
 	if vendor == "copilot" {
 		for name, server := range servers {
 			if len(server.Env) > 0 || len(server.Headers) > 0 {
@@ -102,7 +112,12 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 	managed := []string{
 		filepath.Join(agentsRoot, "AGENTS.md"),
 		filepath.Join(agentsRoot, "manifest.json"),
-		filepath.Join(agentsRoot, "tools", "mcp.json"),
+	}
+	if hasTools {
+		managed = append(managed, filepath.Join(agentsRoot, "tools", "mcp.json"))
+	}
+	if hasHooks {
+		managed = append(managed, filepath.Join(agentsRoot, "hooks", "hooks.json"))
 	}
 	if !force {
 		for _, path := range managed {
@@ -120,7 +135,13 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 			}
 		}
 	}
-	profiles := []string{"tools"}
+	profiles := []string{}
+	if hasTools {
+		profiles = append(profiles, "tools")
+	}
+	if hasHooks {
+		profiles = append(profiles, "hooks")
+	}
 	if info, err := os.Lstat(vendorSkillsPath(vendor, root)); err == nil && info.IsDir() {
 		profiles = append(profiles, "skills")
 		if vendor == "claude" {
@@ -136,9 +157,17 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 	if err := atomicWrite(filepath.Join(agentsRoot, "manifest.json"), append(manifest, '\n'), 0o644); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(mcpDocument{Servers: servers}, "", "  ")
-	if err := atomicWrite(filepath.Join(agentsRoot, "tools", "mcp.json"), append(data, '\n'), 0o644); err != nil {
-		return err
+	if hasTools {
+		data, _ := json.MarshalIndent(mcpDocument{Servers: servers}, "", "  ")
+		if err := atomicWrite(filepath.Join(agentsRoot, "tools", "mcp.json"), append(data, '\n'), 0o644); err != nil {
+			return err
+		}
+	}
+	if hasHooks {
+		data, _ := json.MarshalIndent(hooks, "", "  ")
+		if err := atomicWrite(filepath.Join(agentsRoot, "hooks", "hooks.json"), append(data, '\n'), 0o644); err != nil {
+			return err
+		}
 	}
 	return Validate(agentsRoot)
 }
@@ -517,6 +546,38 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 			}
 		}
 	}
+	if selected["hooks"] {
+		hooks, err := readCanonicalHooks(agentsRoot)
+		if err != nil {
+			return preparedProjection{}, err
+		}
+		hookWrites, hashes, err := prepareHookWrites(vendor, root, hooks, state, options)
+		if err != nil {
+			result.Applicable = false
+			result.Diagnostics = append(result.Diagnostics, err.Error())
+		} else {
+			for path, data := range hookWrites {
+				addWrite(&result, writes, root, path, data)
+			}
+			for path, hash := range hashes {
+				if vendor == "claude" {
+					next.HooksHash = hash
+				} else {
+					next.Files[path] = hash
+				}
+			}
+		}
+	}
+	if vendor == "claude" && !selected["hooks"] && (state.HooksHash != "" || state.Files[".claude/settings.json"] != "") {
+		path := vendorHooksPath(vendor, root)
+		data, err := mergeClaudeHooks(path, nil, state.HooksHash, state.Files[".claude/settings.json"], options)
+		if err != nil {
+			result.Applicable = false
+			result.Diagnostics = append(result.Diagnostics, err.Error())
+		} else if data != nil {
+			addWrite(&result, writes, root, path, data)
+		}
+	}
 
 	if vendor == "claude" {
 		bridgeWrites, hashes, err := prepareClaudeBridges(root, state, options)
@@ -547,6 +608,9 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		}
 	}
 	for relative, oldHash := range state.Files {
+		if vendor == "claude" && relative == ".claude/settings.json" {
+			continue
+		}
 		if _, remains := next.Files[relative]; remains {
 			continue
 		}
@@ -809,6 +873,92 @@ func resolveEntryConflict(name string, existing, desired []byte, oldHash string,
 		return fmt.Errorf("ODA-MERGE-0002: managed MCP server %q was modified", name)
 	}
 	return nil
+}
+
+func prepareHookWrites(vendor, root string, hooks hooksDocument, state ownershipState, options ApplyOptions) (map[string][]byte, map[string]string, error) {
+	native, err := nativeHooks(vendor, hooks)
+	if err != nil {
+		return nil, nil, err
+	}
+	path := vendorHooksPath(vendor, root)
+	relative, _ := filepath.Rel(root, path)
+	stateKey := filepath.ToSlash(relative)
+	writes := map[string][]byte{}
+	hashes := map[string]string{}
+	var data []byte
+	if vendor == "claude" {
+		data, err = mergeClaudeHooks(path, native["hooks"], state.HooksHash, state.Files[stateKey], options)
+	} else {
+		data, err = renderManagedJSON(path, native, state.Files[stateKey], options)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	writes[path] = data
+	hashes[stateKey] = digest(data)
+	if vendor == "claude" {
+		raw, _ := json.Marshal(native["hooks"])
+		hashes[stateKey] = semanticDigest(raw)
+	}
+	return writes, hashes, nil
+}
+
+func renderManagedJSON(path string, value map[string]any, oldHash string, options ApplyOptions) ([]byte, error) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	if err := checkOwnedFile(path, oldHash, data, options); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// Only the hooks field is owned. Accept old whole-file hashes only when the
+// file is unchanged; this upgrades existing state without accepting drift.
+func mergeClaudeHooks(path string, desired any, oldHash, legacyHash string, options ApplyOptions) ([]byte, error) {
+	document := map[string]json.RawMessage{}
+	existing, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if desired == nil {
+			return nil, nil
+		}
+	} else if err != nil {
+		return nil, err
+	} else {
+		if err := json.Unmarshal(existing, &document); err != nil || document == nil {
+			return nil, fmt.Errorf("ODA-MERGE-0001: Claude settings must be a JSON object")
+		}
+		if legacyHash != "" && digest(existing) != legacyHash && !options.Force {
+			return nil, fmt.Errorf("ODA-MERGE-0002: legacy managed Claude settings were modified")
+		}
+		if current, exists := document["hooks"]; exists {
+			if oldHash != "" && semanticDigest(current) != oldHash && !options.Force {
+				return nil, fmt.Errorf("ODA-MERGE-0002: managed Claude hooks were modified")
+			}
+			if oldHash == "" && legacyHash == "" && !options.Force {
+				data, _ := json.Marshal(desired)
+				if semanticDigest(current) != semanticDigest(data) {
+					return nil, fmt.Errorf("ODA-MERGE-0004: unowned Claude hooks conflict with the canonical catalogue")
+				}
+				if !options.Adopt {
+					return nil, fmt.Errorf("ODA-MERGE-0003: Claude hooks already exist; use --adopt for equivalent content")
+				}
+			}
+		}
+	}
+	if desired == nil {
+		delete(document, "hooks")
+	} else {
+		data, err := json.Marshal(desired)
+		if err != nil {
+			return nil, err
+		}
+		document["hooks"] = data
+	}
+	data, err := json.MarshalIndent(document, "", "  ")
+	return append(data, '\n'), err
 }
 
 func prepareSkillWrites(root string, state ownershipState, options ApplyOptions) (map[string][]byte, map[string]string, error) {

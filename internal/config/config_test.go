@@ -67,6 +67,17 @@ url = "https://example.test/mcp"
 http_headers = { Authorization = "Bearer token" }
 `
 	writeFixture(t, filepath.Join(codex, ".codex", "config.toml"), config)
+	writeFixture(t, filepath.Join(codex, ".codex", "hooks.json"), `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type":"command","command":"echo codex","timeout":3}
+        ]
+      }
+    ]
+  }
+}`)
 	writeFixture(t, filepath.Join(codex, ".agents", "skills", "review", "SKILL.md"), "# Review\n")
 	writeFixture(t, filepath.Join(codex, "AGENTS.md"), "# Codex instructions\n")
 
@@ -81,12 +92,155 @@ http_headers = { Authorization = "Bearer token" }
 	if !strings.Contains(string(data), `"type": "stdio"`) || !strings.Contains(string(data), `"url": "https://example.test/mcp"`) || !strings.Contains(string(data), `"Authorization": "Bearer token"`) {
 		t.Fatalf("converted MCP configuration lost server fields: %s", data)
 	}
+	data, err = os.ReadFile(filepath.Join(copilot, ".github", "hooks", "open-dot-agents.json"))
+	if err != nil {
+		t.Fatalf("read converted Copilot hooks: %v", err)
+	}
+	if !strings.Contains(string(data), `"sessionStart"`) || !strings.Contains(string(data), `"timeoutSec": 3`) {
+		t.Fatalf("converted hook configuration lost fields: %s", data)
+	}
 	instructions, err := os.ReadFile(filepath.Join(copilot, "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("read converted instructions: %v", err)
 	}
 	if string(instructions) != "# Codex instructions\n" {
 		t.Fatalf("unexpected converted instructions: %q", instructions)
+	}
+}
+
+func TestImportRepositoryImportsNativeHooks(t *testing.T) {
+	for _, test := range []struct {
+		vendor      string
+		writeNative func(t *testing.T, root string)
+		want        []string
+	}{
+		{
+			vendor: "copilot",
+			writeNative: func(t *testing.T, root string) {
+				writeFixture(t, filepath.Join(root, ".github", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"}}}`)
+				writeFixture(t, filepath.Join(root, ".github", "hooks", "open-dot-agents.json"), `{"version":1,"hooks":{"sessionStart":[{"type":"command","command":"echo copilot","timeoutSec":4}]}}`)
+			},
+			want: []string{`"SessionStart"`, `"timeoutSec": 4`},
+		},
+		{
+			vendor: "codex",
+			writeNative: func(t *testing.T, root string) {
+				writeFixture(t, filepath.Join(root, ".codex", "config.toml"), "[mcp_servers.local]\ncommand = 'server'\n")
+				writeFixture(t, filepath.Join(root, ".codex", "hooks.json"), `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo codex","timeout":4}]}]}}`)
+			},
+			want: []string{`"SessionStart"`, `"timeoutSec": 4`},
+		},
+		{
+			vendor: "claude",
+			writeNative: func(t *testing.T, root string) {
+				writeFixture(t, filepath.Join(root, ".mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"}}}`)
+				writeFixture(t, filepath.Join(root, ".claude", "settings.json"), `{"theme":"dark","hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo claude","timeout":4}]}]}}`)
+			},
+			want: []string{`"SessionStart"`, `"timeoutSec": 4`},
+		},
+	} {
+		t.Run(test.vendor, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixture(t, filepath.Join(root, "AGENTS.md"), "# Native instructions\n")
+			test.writeNative(t, root)
+			if err := ImportRepository(test.vendor, root, false, false); err != nil {
+				t.Fatalf("import %s repository: %v", test.vendor, err)
+			}
+			manifest, err := os.ReadFile(filepath.Join(root, ".agents", "manifest.json"))
+			if err != nil || !strings.Contains(string(manifest), `"hooks"`) {
+				t.Fatalf("imported manifest did not select hooks: %s (%v)", manifest, err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, ".agents", "hooks", "hooks.json"))
+			if err != nil {
+				t.Fatalf("read imported hooks: %v", err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(string(data), want) {
+					t.Fatalf("missing %q in imported hooks:\n%s", want, data)
+				}
+			}
+			if err := Validate(filepath.Join(root, ".agents")); err != nil {
+				t.Fatalf("validate imported tree: %v", err)
+			}
+		})
+	}
+}
+
+func TestImportRepositoryRejectsUnsupportedNativeHookFields(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "AGENTS.md"), "# Native instructions\n")
+	writeFixture(t, filepath.Join(root, ".github", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"}}}`)
+	writeFixture(t, filepath.Join(root, ".github", "hooks", "open-dot-agents.json"), `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "echo shell-specific"
+      }
+    ]
+  }
+}`)
+	err := ImportRepository("copilot", root, false, false)
+	if err == nil || !strings.Contains(err.Error(), "unsupported field") {
+		t.Fatalf("expected unsupported native hook field error, got %v", err)
+	}
+}
+
+func TestNativeHookEventMappings(t *testing.T) {
+	copilot := map[string]string{
+		"SessionStart":      "sessionStart",
+		"SessionEnd":        "sessionEnd",
+		"UserPromptSubmit":  "userPromptSubmitted",
+		"PreToolUse":        "preToolUse",
+		"PostToolUse":       "postToolUse",
+		"PermissionRequest": "permissionRequest",
+		"Stop":              "agentStop",
+		"SubagentStart":     "subagentStart",
+		"SubagentStop":      "subagentStop",
+		"PreCompact":        "preCompact",
+	}
+	for portable, native := range copilot {
+		t.Run("copilot/"+portable, func(t *testing.T) {
+			projected, err := nativeHookEvent("copilot", portable)
+			if err != nil {
+				t.Fatalf("project Copilot event: %v", err)
+			}
+			if projected != native {
+				t.Fatalf("unexpected Copilot event: got %q, want %q", projected, native)
+			}
+			canonical, err := canonicalHookEvent("copilot", native)
+			if err != nil {
+				t.Fatalf("import Copilot event: %v", err)
+			}
+			if canonical != portable {
+				t.Fatalf("unexpected canonical event: got %q, want %q", canonical, portable)
+			}
+		})
+		for _, vendor := range []string{"codex", "claude"} {
+			t.Run(vendor+"/"+portable, func(t *testing.T) {
+				projected, err := nativeHookEvent(vendor, portable)
+				if err != nil {
+					t.Fatalf("project %s event: %v", vendor, err)
+				}
+				if projected != portable {
+					t.Fatalf("unexpected %s event: got %q, want %q", vendor, projected, portable)
+				}
+				canonical, err := canonicalHookEvent(vendor, portable)
+				if err != nil {
+					t.Fatalf("import %s event: %v", vendor, err)
+				}
+				if canonical != portable {
+					t.Fatalf("unexpected canonical event: got %q, want %q", canonical, portable)
+				}
+			})
+		}
+	}
+	if _, err := nativeHookEvent("copilot", "PostToolUseFailure"); err == nil || !strings.Contains(err.Error(), "unsupported portable hook event") {
+		t.Fatalf("expected unsupported portable event error, got %v", err)
+	}
+	if _, err := canonicalHookEvent("codex", "postToolUse"); err == nil || !strings.Contains(err.Error(), "unsupported portable hook event") {
+		t.Fatalf("expected unsupported native event error, got %v", err)
 	}
 }
 
@@ -212,6 +366,48 @@ func TestExportHonorsSelectedManifestProfiles(t *testing.T) {
 	}
 }
 
+func TestExportTargetPathsHonorsHooksProfile(t *testing.T) {
+	for _, test := range []struct {
+		vendor string
+		paths  []string
+	}{
+		{
+			vendor: "copilot",
+			paths:  []string{".github/hooks/open-dot-agents.json", "AGENTS.md"},
+		},
+		{
+			vendor: "codex",
+			paths:  []string{".codex/hooks.json", "AGENTS.md"},
+		},
+		{
+			vendor: "claude",
+			paths:  []string{".claude/settings.json", "AGENTS.md", "CLAUDE.md"},
+		},
+	} {
+		t.Run(test.vendor, func(t *testing.T) {
+			source := t.TempDir()
+			output := t.TempDir()
+			writeHookRepositoryFixture(t, source)
+
+			paths, err := ExportTargetPaths(test.vendor, filepath.Join(source, ".agents"), output)
+			if err != nil {
+				t.Fatalf("target paths: %v", err)
+			}
+			got := make([]string, 0, len(paths))
+			for _, path := range paths {
+				relative, err := filepath.Rel(output, path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, filepath.ToSlash(relative))
+			}
+			if strings.Join(got, "\n") != strings.Join(test.paths, "\n") {
+				t.Fatalf("unexpected managed paths:\n%s", strings.Join(got, "\n"))
+			}
+		})
+	}
+}
+
 func TestExportBacksUpExistingConfigurationAndSkills(t *testing.T) {
 	source := t.TempDir()
 	writeCanonicalFixture(t, source)
@@ -317,6 +513,7 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 		"AGENTS.md",
 		"manifest.json",
 		"tools/mcp.json",
+		"hooks/hooks.json",
 		"skills/example/SKILL.md",
 	} {
 		if _, err := os.Stat(filepath.Join(agentsRoot, path)); err != nil {
@@ -328,7 +525,7 @@ func TestInitCreatesExportableStarterTree(t *testing.T) {
 		t.Fatalf("read starter manifest: %v", err)
 	}
 	if !strings.Contains(string(manifest), `"version": "1.0.0"`) ||
-		!strings.Contains(string(manifest), `"profiles": ["tools", "skills"]`) {
+		!strings.Contains(string(manifest), `"profiles": ["tools", "hooks", "skills"]`) {
 		t.Fatalf("starter manifest is not interoperable: %s", manifest)
 	}
 	if _, err := readCanonicalMCP(agentsRoot); err != nil {
@@ -411,6 +608,27 @@ func TestValidateRejectsInvalidCanonicalStructure(t *testing.T) {
 				writeFixture(t, filepath.Join(agentsRoot, "tools", "mcp.json"), `{"mcpServers":{"remote":{"type":"http","url":"https://example.test/mcp"}}}`)
 			},
 			wantErr: "unsupported canonical type",
+		},
+		{
+			name: "unsupported hook event",
+			mutate: func(t *testing.T, agentsRoot string) {
+				writeFixture(t, filepath.Join(agentsRoot, "hooks", "hooks.json"), `{"hooks":{"BadEvent":[{"hooks":[{"type":"command","command":"echo bad"}]}]}}`)
+			},
+			wantErr: "unsupported hook event",
+		},
+		{
+			name: "unsupported hook handler type",
+			mutate: func(t *testing.T, agentsRoot string) {
+				writeFixture(t, filepath.Join(agentsRoot, "hooks", "hooks.json"), `{"hooks":{"SessionStart":[{"hooks":[{"type":"prompt","command":"echo bad"}]}]}}`)
+			},
+			wantErr: "unsupported handler type",
+		},
+		{
+			name: "extra hook handler field",
+			mutate: func(t *testing.T, agentsRoot string) {
+				writeFixture(t, filepath.Join(agentsRoot, "hooks", "hooks.json"), `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo bad","prompt":"bad"}]}]}}`)
+			},
+			wantErr: "unsupported handler field",
 		},
 		{
 			name: "extra versioned MCP server field",
@@ -524,6 +742,13 @@ func TestValidateRequiresOnlyManifestProfiles(t *testing.T) {
 			name:     "instructions only",
 			profiles: `[]`,
 			setup:    func(t *testing.T, agentsRoot string) {},
+		},
+		{
+			name:     "hooks only",
+			profiles: `["hooks"]`,
+			setup: func(t *testing.T, agentsRoot string) {
+				writeFixture(t, filepath.Join(agentsRoot, "hooks", "hooks.json"), `{"hooks":{}}`)
+			},
 		},
 	}
 
@@ -785,28 +1010,33 @@ func TestConvertOpenCodeToItselfDoesNotCopySkillsOntoThemselves(t *testing.T) {
 
 func TestVendorCapabilities(t *testing.T) {
 	for _, test := range []struct {
-		vendor    string
-		mcpPath   string
-		skills    string
-		mcpStatus string
+		vendor         string
+		harnessVersion string
+		mcpPath        string
+		skills         string
+		hooks          string
+		mcpStatus      string
 	}{
-		{vendor: "copilot", mcpPath: ".github/mcp.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
-		{vendor: "codex", mcpPath: ".codex/config.toml", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
-		{vendor: "claude", mcpPath: ".mcp.json", skills: ".claude/skills", mcpStatus: "cli-projection-only"},
+		{vendor: "copilot", harnessVersion: "1.0.83", mcpPath: ".github/mcp.json", hooks: ".github/hooks/open-dot-agents.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
+		{vendor: "codex", harnessVersion: "0.153.4", mcpPath: ".codex/config.toml", hooks: ".codex/hooks.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
+		{vendor: "claude", harnessVersion: "2.1.229", mcpPath: ".mcp.json", hooks: ".claude/settings.json", skills: ".claude/skills", mcpStatus: "cli-projection-only"},
 	} {
 		t.Run(test.vendor, func(t *testing.T) {
 			capabilities, err := VendorCapabilities(test.vendor)
 			if err != nil {
 				t.Fatalf("read capabilities: %v", err)
 			}
-			if capabilities.Vendor != test.vendor || capabilities.Status != "not-conformance-supported" || capabilities.Paths["tools"] != test.mcpPath ||
+			if capabilities.Vendor != test.vendor || capabilities.Status != "not-conformance-supported" || capabilities.Paths["tools"] != test.mcpPath || capabilities.Paths["hooks"] != test.hooks ||
 				capabilities.Paths["instructions"] != "AGENTS.md" || capabilities.Paths["instructions_source"] != ".agents/AGENTS.md" || capabilities.Paths["skills"] != test.skills {
 				t.Fatalf("unexpected capabilities: %#v", capabilities)
 			}
 			if capabilities.ProfileStatus["tools"] != test.mcpStatus || capabilities.Evidence == "" {
 				t.Fatalf("unexpected compatibility summary: %#v", capabilities)
 			}
-			if strings.Join(capabilities.Profiles, ",") != "tools,skills" {
+			if capabilities.HarnessVersion != test.harnessVersion {
+				t.Fatalf("unexpected harness version: %#v", capabilities)
+			}
+			if strings.Join(capabilities.Profiles, ",") != "tools,hooks,skills" {
 				t.Fatalf("unexpected profiles: %#v", capabilities.Profiles)
 			}
 			if test.vendor == "claude" && capabilities.Paths["instructions_bridge"] != "CLAUDE.md" {

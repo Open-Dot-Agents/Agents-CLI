@@ -16,6 +16,7 @@ CLI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = CLI_ROOT.parent
 COMPATIBILITY_JSON = CLI_ROOT / "compatibility.json"
 COMPATIBILITY_MD = REPO_ROOT / "docs" / "COMPATIBILITY.md"
+VERSIONS_JSON = REPO_ROOT / "WORKBENCH" / "conformance" / "versions.json"
 
 START = "<!-- compatibility-table:start -->"
 END = "<!-- compatibility-table:end -->"
@@ -43,17 +44,18 @@ def title_profile(value: str) -> str:
 
 def render_table(data: dict[str, Any]) -> str:
     lines = [
-        "| Adapter | Harness version | Instructions | Tools | Skills | Status | Evidence |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Adapter | Harness version | Instructions | Tools | Hooks | Skills | Status | Evidence |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for adapter in data["adapters"]:
         profiles = adapter.get("profiles", {})
         lines.append(
-            "| {name} | {version} | {instructions} | {tools} | {skills} | {status} | {evidence} |".format(
+            "| {name} | {version} | {instructions} | {tools} | {hooks} | {skills} | {status} | {evidence} |".format(
                 name=adapter["name"],
                 version=adapter.get("harness_version") or "Not pinned",
                 instructions=title_profile(adapter.get("capabilities", {}).get("instructions", "unknown")),
                 tools=title_profile(profiles.get("tools", "unknown")),
+                hooks=title_profile(profiles.get("hooks", "unknown")),
                 skills=title_profile(profiles.get("skills", "unknown")),
                 status=title_status(adapter["status"]),
                 evidence=adapter["evidence"],
@@ -97,15 +99,45 @@ def check_supported_evidence(data: dict[str, Any]) -> list[str]:
         if not adapter.get("harness_version"):
             errors.append(f"{label}: conformance-supported requires harness_version")
         capabilities = adapter.get("capabilities", {})
-        required = {"instructions", "instructions.scoped", "skills", "mcp.stdio", "mcp.remote", "mcp.envRef"}
+        required = {"instructions", "instructions.scoped", "skills", "mcp.stdio", "mcp.remote", "mcp.envRef", "hooks.command"}
         if set(capabilities) != required:
             errors.append(f"{label}: conformance-supported must declare every 1.0 capability")
         for capability, outcome in capabilities.items():
             if outcome not in {"lossless", "transformed"}:
                 errors.append(f"{label}: conformance-supported capability {capability} is {outcome}")
         evidence = str(adapter.get("evidence", "")).lower()
-        if "unit test" in evidence or "projection test" in evidence or "no version-pinned" in evidence:
+        weak_phrases = {
+            "unit test",
+            "projection test",
+            "pinned preflight only",
+            "no passing native",
+            "no version-pinned",
+        }
+        if any(phrase in evidence for phrase in weak_phrases):
             errors.append(f"{label}: conformance-supported requires native black-box evidence")
+    return errors
+
+
+def check_pinned_harness_versions(data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    versions = json.loads(VERSIONS_JSON.read_text(encoding="utf-8"))
+    harnesses = versions.get("harnesses", {})
+    if not isinstance(harnesses, dict):
+        return [f"{VERSIONS_JSON.relative_to(REPO_ROOT)} must define harnesses"]
+    for adapter in data["adapters"]:
+        vendor = adapter.get("reference_cli_vendor")
+        if not vendor:
+            continue
+        expected = harnesses.get(vendor)
+        if not isinstance(expected, dict):
+            errors.append(f"{adapter.get('id', vendor)}: missing Workbench pinned harness version")
+            continue
+        actual_version = adapter.get("harness_version")
+        expected_version = expected.get("version")
+        if actual_version != expected_version:
+            errors.append(
+                f"{adapter.get('id', vendor)}: harness_version={actual_version!r}, expected Workbench pinned version {expected_version!r}"
+            )
     return errors
 
 
@@ -155,6 +187,8 @@ def check_cli_capabilities(data: dict[str, Any]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="rewrite generated compatibility documentation")
+    parser.add_argument("--skip-workbench-pins", action="store_true",
+                        help="skip the version-pin comparison when Workbench is not checked out")
     args = parser.parse_args()
 
     data = load_compatibility()
@@ -165,6 +199,10 @@ def main() -> int:
 
     errors = []
     errors.extend(check_markdown(data))
+    if args.skip_workbench_pins:
+        print("SKIP Workbench harness pin comparison (not part of this checkout)")
+    else:
+        errors.extend(check_pinned_harness_versions(data))
     errors.extend(check_supported_evidence(data))
     errors.extend(check_cli_capabilities(data))
     if errors:
