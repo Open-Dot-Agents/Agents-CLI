@@ -69,6 +69,18 @@ Use `--adopt` only for semantically equivalent existing content. Use
 `--force --backup` for an intentional replacement. Writes reject symlink paths and use
 same-directory temporary files plus atomic rename.
 
+Remove the `tools` profile and run `apply` or `sync` to remove owned MCP
+servers. Unowned servers and unrelated native settings remain. A modified
+owned entry blocks removal unless you use `--force`; `--force --backup`
+saves the previous file. Removal does not need the canonical MCP catalogue.
+If the native file is absent, apply clears stale ownership without creating it.
+
+Earlier CLI builds could clear ownership without removing the native servers.
+For these repositories, review the canonical catalogue and native entries,
+select `tools` again, and review `plan`. Use `--adopt` only when the existing
+entries are equivalent to the reviewed catalogue. Apply to restore ownership,
+then remove `tools` and apply again. Do not infer ownership from server names.
+
 Codex environment URNs become `env_vars` or `env_http_headers`. Claude Code
 uses `${VARIABLE}` expansion. Copilot CLI projections containing portable
 environment references are refused because its current documented project

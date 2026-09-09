@@ -509,10 +509,13 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 	next := ownershipState{Version: ownershipVersion, Vendor: vendor, Entries: map[string]string{}, Files: map[string]string{}}
 	deletes := []string{}
 
-	if selected["tools"] {
-		servers, err := readCanonicalMCP(agentsRoot)
-		if err != nil {
-			return preparedProjection{}, err
+	if selected["tools"] || len(state.Entries) > 0 {
+		var servers map[string]MCPServer
+		if selected["tools"] {
+			servers, err = readCanonicalMCP(agentsRoot)
+			if err != nil {
+				return preparedProjection{}, err
+			}
 		}
 		for name, server := range servers {
 			if vendor == "copilot" && (len(server.Env) > 0 || len(server.Headers) > 0) {
@@ -542,7 +545,9 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 				result.Diagnostics = append(result.Diagnostics, err.Error())
 			} else {
 				next.Entries = entryHashes
-				addWrite(&result, writes, root, path, data)
+				if data != nil || selected["tools"] {
+					addWrite(&result, writes, root, path, data)
+				}
 			}
 		}
 	}
@@ -658,6 +663,8 @@ func mergeJSONVendor(vendor, path string, desired map[string]MCPServer, state ow
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
+	} else if desired == nil {
+		return nil, map[string]string{}, nil
 	}
 	next := map[string]string{}
 	for name, server := range desired {
@@ -723,6 +730,9 @@ func nativeJSONServer(vendor string, server MCPServer) map[string]any {
 func mergeCodex(path string, desired map[string]MCPServer, state ownershipState, options ApplyOptions) ([]byte, map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		if desired == nil {
+			return nil, map[string]string{}, nil
+		}
 		data = nil
 	} else if err != nil {
 		return nil, nil, err

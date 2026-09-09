@@ -23,9 +23,8 @@
         "mcp.envRef": "unsupported",
         "hooks.command": "projection-only"
       },
-      "evidence": "Local native feature tests recorded with latest pinned copilot; tools-profile removal and unselected skill exposure fail; environment-reference mappings remain refused",
+      "evidence": "Local native feature tests recorded with latest pinned copilot; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; environment-reference mappings remain refused",
       "limitations": [
-        "Removing the tools profile leaves the previously projected MCP server active",
         "Native discovery exposes canonical skills when the skills profile is unselected",
         "Native evidence covers Linux fixtures, not other operating systems",
         "Portable MCP environment references are refused because current documented project configuration exposes literal values",
@@ -39,7 +38,7 @@
       "reference_cli_vendor": "codex",
       "name": "Reference CLI: Codex",
       "harness": "OpenAI Codex CLI",
-      "harness_version": "0.153.4",
+      "harness_version": "0.154.0",
       "status": "not-conformance-supported",
       "profiles": {
         "tools": "cli-projection-only",
@@ -55,9 +54,8 @@
         "mcp.envRef": "transformed",
         "hooks.command": "projection-only"
       },
-      "evidence": "Local native feature tests recorded with latest pinned codex; tools-profile removal and unselected skill exposure fail; missing stdio environment references also fail",
+      "evidence": "Local native feature tests recorded with latest pinned codex; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; missing stdio environment references also fail",
       "limitations": [
-        "Removing the tools profile leaves the previously projected MCP server active",
         "Native discovery exposes canonical skills when the skills profile is unselected",
         "Missing stdio environment references do not stop native server activation",
         "Native evidence covers Linux fixtures, not other operating systems",

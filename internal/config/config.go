@@ -152,9 +152,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "unsupported", "hooks.command": "projection-only"},
-		Evidence:         "Local native feature tests recorded with latest pinned copilot; tools-profile removal and unselected skill exposure fail; environment-reference mappings remain refused",
+		Evidence:         "Local native feature tests recorded with latest pinned copilot; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; environment-reference mappings remain refused",
 		Limitations: []string{
-			"Removing the tools profile leaves the previously projected MCP server active",
 			"Native discovery exposes canonical skills when the skills profile is unselected",
 			"Native evidence covers Linux fixtures, not other operating systems",
 			"Portable MCP environment references are refused because current documented project configuration exposes literal values",
@@ -166,7 +165,7 @@ var vendorCompatibility = map[string]compatibilitySummary{
 	"codex": {
 		Name:           "Reference CLI: Codex",
 		Harness:        "OpenAI Codex CLI",
-		HarnessVersion: "0.153.4",
+		HarnessVersion: "0.154.0",
 		Status:         "not-conformance-supported",
 		ProfileStatus: map[string]string{
 			"tools":  "cli-projection-only",
@@ -174,9 +173,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "transformed", "hooks.command": "projection-only"},
-		Evidence:         "Local native feature tests recorded with latest pinned codex; tools-profile removal and unselected skill exposure fail; missing stdio environment references also fail",
+		Evidence:         "Local native feature tests recorded with latest pinned codex; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; missing stdio environment references also fail",
 		Limitations: []string{
-			"Removing the tools profile leaves the previously projected MCP server active",
 			"Native discovery exposes canonical skills when the skills profile is unselected",
 			"Missing stdio environment references do not stop native server activation",
 			"Native evidence covers Linux fixtures, not other operating systems",
