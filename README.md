@@ -163,3 +163,91 @@ Other security requests and native security import remain refused before
 writes. Force does not override these refusals. The legacy export API also
 refuses selected security policy. See [usage and limits](../docs/SECURITY_PROFILES.md)
 and the [draft specification](../SPEC/spec/1.1-draft/SPECIFICATION.md).
+
+## Experimental native configuration
+
+Copilot draft.2 user settings include initial mode, tabs, status-line commands,
+inline-image preferences, and notifications. Value validation includes history
+and refresh bounds and tab identifiers. The pinned terminal tests cover mode,
+tabs, and status-line execution; other preference behavior remains unverified.
+See [native settings and limits](../docs/NATIVE_CONFIGURATION.md).
+
+Named Copilot subagents can also select a native model, effort, and context tier,
+or inherit the parent choice. Pinned tests cover model/effort dispatch and custom
+agent disablement. Depth and concurrency overrides require native usage-based
+billing; plan output reports this prerequisite. Apply does not change account
+state or enforce those limits.
+
+Both Codex and Copilot already load project skills from `.agents/skills`.
+Codex native user selectors can enable or disable skills. Import preserves those
+selectors when it copies user skills to a new native home. Pinned Codex ignores
+project selectors, so required draft.2 project selectors refuse before writes.
+This restriction does not affect ordinary project skill discovery.
+
+Draft.2 also accepts the `plugins` profile. Store existing Codex or Copilot
+selection configuration in `.agents/plugins/<namespace>/`, with `profile.json`
+and a native `config` artifact. Import reads the native selection; it does not
+copy or rewrite the installed package. Plan and apply use the same scope,
+ownership, and transaction checks as the native profile. Installation, updates,
+and trust remain native operations. A later native startup can fetch enabled
+packages. See the [plugin guide](../docs/PLUGIN_STANDARD.md) and
+[example](../SPEC/examples/plugins-draft/.agents/manifest.json).
+
+The `1.1.0-draft.2` native profile adds `--scope project|user` to import, plan,
+apply, and sync. Project is the default. User scope requires an absolute
+`--native-home`. Use `--experimental` and an explicit Codex or Copilot vendor.
+The existing `--codex-home` option retains draft.1 security semantics.
+
+Native ownership is per setting or asset. A different source repository cannot
+replace or remove a setting with `--force`. `--adopt` accepts equal unowned
+values. New user files and backups are private. Import can add disjoint content
+to an existing draft.2 root; conflicts refuse, even with force. It preserves
+portable policy and required native status. It does not migrate stable or
+draft.1 roots, or import trust, account, or credential stores.
+
+Codex value validation uses its pinned 0.154.0 schema and verified aliases.
+Capabilities expose validator declarations separately from native behavior.
+User skill import preserves executable assets and excludes system packages.
+Plan includes private backup operations before apply starts.
+Native Linux transactions use pinned directory handles and snapshot preconditions.
+They refuse stale plans and backup-creation races, and keep rollback from following
+a replacement symlink. A concurrent edit during rollback is reported and retained.
+Unknown optional object fields have separate diagnostics and do not suppress
+known siblings. Import reads recognized native agents, hooks, and scoped
+instructions. The Codex standalone-agent mapping has bounded native execution
+evidence; Copilot agents and unmapped hook fields remain inactive.
+
+This implementation is incomplete. See the parent repository's
+`docs/NATIVE_CONFIGURATION.md` and `.agents/features/coverage.json` for exact
+boundaries. A configuration mapping does not establish native support.
+
+### Draft.2 Codex telemetry scope
+
+Codex `otel` settings require `--scope user --native-home /absolute/path`.
+Pinned Codex `0.154.0` ignores project telemetry. Required project settings
+refuse before writes; optional settings remain inactive. Collector credentials
+remain external. Certificate and private-key paths are references; apply does
+not copy these files. Import preserves relative reference targets. CA-only
+HTTP TLS has bounded native evidence; HTTP client identities fail in the pin
+and keep the complete exporter inactive. These tests do not establish gRPC,
+metrics delivery, or live reload support. See the
+[native configuration guide](../docs/NATIVE_CONFIGURATION.md).
+
+### Scoped instruction compatibility links
+
+The reference CLI accepts a nested `AGENTS.md` link to that directory's own
+`.agents/AGENTS.md`. The canonical directory and target file must be real
+entries. Links to external files, ancestor instructions, broken targets,
+cycles, or indirect canonical sources are refused before projection writes.
+Ordinary scoped instruction files retain their scope. The Claude file adapter
+uses the same checks when it creates a scoped `CLAUDE.md` bridge. These CLI
+checks do not establish native harness behavior.
+
+When a stable project has no root `AGENTS.md`, plan reports a `create-link`
+action and apply creates `AGENTS.md -> .agents/AGENTS.md`. All-vendor sync creates
+one shared link and records ownership for each selected adapter. A failed file
+transaction removes the newly created link. Rollback preserves a link path
+that another writer has replaced. Existing user instruction files remain
+unchanged, including with `--force`. The Claude file adapter also creates its
+initial `CLAUDE.md` bridge. An empty regular `.agents/skills/.gitkeep` is a
+placeholder; other unselected skill content still refuses Codex/Copilot apply.

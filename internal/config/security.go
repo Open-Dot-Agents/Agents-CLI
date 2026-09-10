@@ -184,7 +184,7 @@ func decodePolicy(path string, target any) error {
 	return nil
 }
 func validatePolicyCommon(version string, coverage []string, extensions map[string]Extension) error {
-	if version != ExperimentalVersion {
+	if version != ExperimentalVersion && version != NativeVersion {
 		return fmt.Errorf("policy version must be %s", ExperimentalVersion)
 	}
 	known := map[string]bool{"builtin-tools": true, "shell": true, "hooks": true, "mcp-local": true, "mcp-remote": true, "lsp": true, "delegation": true}
@@ -207,10 +207,18 @@ func validatePolicyCommon(version string, coverage []string, extensions map[stri
 }
 func readSecurityPolicy(root string, selected map[string]bool) (SecurityPolicy, error) {
 	var policy SecurityPolicy
+	expectedVersion := ExperimentalVersion
+	var manifest manifestDocument
+	if decodePolicy(filepath.Join(root, "manifest.json"), &manifest) == nil && manifest.Version == NativeVersion {
+		expectedVersion = NativeVersion
+	}
 	if selected["permissions"] {
 		p := new(PermissionsPolicy)
 		if err := decodePolicy(filepath.Join(root, "permissions", "permissions.json"), p); err != nil {
 			return policy, err
+		}
+		if p.Version != expectedVersion {
+			return policy, fmt.Errorf("policy version must match manifest version %s", expectedVersion)
 		}
 		if err := validatePolicyCommon(p.Version, p.Coverage, p.Extensions); err != nil {
 			return policy, err
@@ -237,6 +245,9 @@ func readSecurityPolicy(root string, selected map[string]bool) (SecurityPolicy, 
 		p := new(SandboxPolicy)
 		if err := decodePolicy(filepath.Join(root, "sandbox", "sandbox.json"), p); err != nil {
 			return policy, err
+		}
+		if p.Version != expectedVersion {
+			return policy, fmt.Errorf("policy version must match manifest version %s", expectedVersion)
 		}
 		if err := validatePolicyCommon(p.Version, p.Coverage, p.Extensions); err != nil {
 			return policy, err
@@ -306,7 +317,7 @@ func draftManifest(root string) (bool, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return false, err
 	}
-	if m.Version != ExperimentalVersion {
+	if m.Version != ExperimentalVersion && m.Version != NativeVersion {
 		return false, nil
 	}
 	if err := decodePolicy(path, &m); err != nil {
@@ -454,6 +465,9 @@ func VendorCapabilitiesWithOptions(vendor string, experimental bool) (Capabiliti
 	if err != nil || !experimental {
 		return result, err
 	}
+	if result.Vendor == "codex" || result.Vendor == "copilot" {
+		result.Native = nativeCapabilities(result.Vendor)
+	}
 	result.Experimental = &ExperimentalCapabilities{StandardVersion: ExperimentalVersion, Profiles: []string{"permissions", "sandbox"}, Status: "refused", EvidenceScope: "validation and refusal only", Paths: map[string]string{"permissions": ".agents/permissions/permissions.json", "sandbox": ".agents/sandbox/sandbox.json"}}
 	if result.Vendor == "codex" {
 		result.Experimental.Status = "subset-available"
@@ -549,6 +563,10 @@ func ValidationStandardVersion(root string, experimental bool) string {
 	if experimental {
 		draft, _ := draftManifest(root)
 		if draft {
+			var m manifestDocument
+			if decodePolicy(filepath.Join(root, "manifest.json"), &m) == nil {
+				return m.Version
+			}
 			return ExperimentalVersion
 		}
 	}

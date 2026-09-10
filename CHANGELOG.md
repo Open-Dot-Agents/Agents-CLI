@@ -4,6 +4,36 @@ All notable changes to the reference CLI are documented here.
 
 ## Unreleased
 
+- Create a missing root instruction compatibility link during stable apply or
+  sync, record its ownership, and roll it back with failed writes. Create the
+  initial Claude file bridge. Ignore only empty regular `.gitkeep` skill markers
+  when checking an unselected skills profile.
+
+- Accept a scoped `AGENTS.md` compatibility link to its own canonical
+  `.agents/AGENTS.md`. Keep external, cross-scope, broken, cyclic, and indirect
+  canonical targets refused before writes. Use the same check for Claude file
+  bridges; this does not establish native harness support.
+
+- Preserve source-relative Codex TLS file references during user import.
+  Keep failing HTTP client-identity exporters inactive without removing their
+  authentication. Record CA-only TLS and independent identity-failure tests.
+
+- Restrict draft.2 Codex telemetry to user scope after native scope tests.
+  Exclude credentials in collector URLs and headers from activation and import.
+  Preserve external certificate and private-key references without copying files.
+
+- Refuse native filesystem redirection, stale plans, late-created backups, and
+  replaced lock identities. Use pinned directories for native writes and rollback.
+
+- Add draft.2 scoped native configuration with private ownership and import.
+  Fix exact JSON number preservation, ownership validation, alias conflicts,
+  skill assets, and backup planning. Use the pinned Codex schema and preserve
+  existing draft.2 policy during additive imports. Full native coverage remains
+  incomplete.
+
+- Record native isolation and model-tool approval tests. Preserve the Copilot
+  local-network and Codex mandatory-ask refusals; do not extend coverage.
+
 - Add explicit opt-in for the 1.1 security draft, strict policy validation,
   normalized refusal plans, and import/export protection against policy loss.
   Add the pinned Codex Linux direct-shell subset, explicit native-home checks,

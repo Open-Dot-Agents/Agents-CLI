@@ -106,6 +106,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return json.NewEncoder(stdout).Encode(capabilities)
 	case "import":
 		flags := flag.NewFlagSet("import", flag.ContinueOnError)
+		scope := flags.String("scope", "", "projection scope: project (default) or user")
+		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		vendor := flags.String("vendor", "", "source vendor: copilot, codex, or claude")
@@ -124,9 +126,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *vendor == "" {
 			return errors.New("--vendor is required")
 		}
-		return config.ImportRepositoryWithOptions(*vendor, *root, config.WriteOptions{Force: *force, Backup: *backup, Experimental: *experimental})
+		return config.ImportRepositoryWithOptions(*vendor, *root, config.WriteOptions{Force: *force, Backup: *backup, Experimental: *experimental, Scope: *scope, NativeHome: *nativeHome})
 	case "sync":
 		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
+		scope := flags.String("scope", "", "projection scope: project (default) or user")
+		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
 		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
@@ -152,7 +156,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
 		var result config.SyncResult
 		var err error
 		if *check {
@@ -175,6 +179,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "plan", "apply":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		scope := flags.String("scope", "", "projection scope: project (default) or user")
+		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
 		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
@@ -200,7 +206,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
 		var result config.PlanResult
 		var err error
 		if args[0] == "plan" || *check {

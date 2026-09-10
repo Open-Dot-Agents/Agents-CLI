@@ -110,6 +110,8 @@ type codexServer struct {
 
 // WriteOptions controls destructive configuration writes.
 type WriteOptions struct {
+	Scope        string
+	NativeHome   string
 	Experimental bool
 	Force        bool
 	Backup       bool
@@ -117,6 +119,7 @@ type WriteOptions struct {
 
 // Capabilities describes the repository-scoped configuration supported for a vendor.
 type Capabilities struct {
+	Native           *NativePlan               `json:"native,omitempty"`
 	Experimental     *ExperimentalCapabilities `json:"experimental,omitempty"`
 	Vendor           string                    `json:"vendor"`
 	Name             string                    `json:"name"`
@@ -163,6 +166,7 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"Hook matchers are limited to PreToolUse, PostToolUse, PermissionRequest, PreCompact, and SubagentStart",
 			"Prompt-mode project MCP requires trusted fixture folders",
 			"Command hook exit code 1 denies the tool call; failure semantics remain native",
+			"Draft.2 native configuration has scoped ownership and typed field mappings. Full feature coverage and native activation remain incomplete; this does not change adapter support status.",
 		},
 	},
 	"codex": {
@@ -185,6 +189,8 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"Catalogue-scoped disableAllHooks is refused; remove the hooks profile to remove owned hooks",
 			"Hook matchers on UserPromptSubmit and Stop are refused",
 			"Command hook exit code 1 fails open; failure semantics remain native",
+			"Draft.2 native configuration has scoped ownership and typed field mappings. Full feature coverage and native activation remain incomplete; this does not change adapter support status.",
+			"Draft.2 Codex telemetry is user-scoped. Local OTLP HTTP JSON logs and traces, including CA-only TLS and reference relocation, have bounded fixture evidence. Project telemetry is ignored. HTTP client identities fail in the pin and keep the complete exporter inactive. gRPC, binary encoding, metrics delivery, and live reload remain unverified.",
 		},
 	},
 	"claude": {
@@ -377,21 +383,11 @@ func validateWithOptions(root string, experimental bool) error {
 		if entry.Name() != "AGENTS.md" {
 			return nil
 		}
-		if entry.Type()&os.ModeSymlink != 0 && path == filepath.Join(repositoryRoot, "AGENTS.md") {
-			resolved, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("resolve root instruction link %q: %w", path, err)
-			}
-			canonical, err := filepath.EvalSymlinks(filepath.Join(root, "AGENTS.md"))
-			if err != nil || resolved != canonical {
-				return fmt.Errorf("root AGENTS.md must link to .agents/AGENTS.md")
-			}
-			return nil
+		canonical := filepath.Join(filepath.Dir(path), ".agents", "AGENTS.md")
+		if path == filepath.Join(repositoryRoot, "AGENTS.md") {
+			canonical = filepath.Join(root, "AGENTS.md")
 		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("canonical instructions %q are not a regular file", path)
-		}
-		return nil
+		return validateInstructionFile(path, canonical)
 	}); err != nil {
 		return err
 	}
@@ -407,6 +403,13 @@ func validateWithOptions(root string, experimental bool) error {
 	}
 	if _, err := readSecurityPolicy(root, selected); err != nil {
 		return err
+	}
+	for _, directory := range []string{"native", "plugins"} {
+		if selected[directory] {
+			if _, err := readScopedNativeProfiles(root, directory); err != nil {
+				return err
+			}
+		}
 	}
 	if selected["skills"] {
 		return validateSkills(filepath.Join(root, "skills"))
@@ -476,6 +479,9 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 	profiles, err := canonicalProfiles(source)
 	if err != nil {
 		return err
+	}
+	if profiles["native"] || profiles["plugins"] {
+		return errors.New("native and plugin selection profiles require repository plan/apply; legacy export cannot preserve them")
 	}
 	if _, diagnostics, err := securityPreflight(vendor, source, profiles); err != nil {
 		return err
@@ -1890,7 +1896,7 @@ func validateManifest(path string) ([]string, bool, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, true, fmt.Errorf("parse manifest %q: %w", path, err)
 	}
-	if manifest.Version != manifestVersion && manifest.Version != ExperimentalVersion {
+	if manifest.Version != manifestVersion && manifest.Version != ExperimentalVersion && manifest.Version != NativeVersion {
 		return nil, true, fmt.Errorf("manifest %q has unsupported version %q (supported: %s)", path, manifest.Version, manifestVersion)
 	}
 	if manifest.Profiles == nil {
@@ -1904,13 +1910,13 @@ func validateManifest(path string) ([]string, bool, error) {
 		if _, seen := seenProfiles[profile]; seen {
 			return nil, true, fmt.Errorf("manifest %q has duplicate profile %q", path, profile)
 		}
-		if profile != "tools" && profile != "hooks" && profile != "skills" && !(manifest.Version == ExperimentalVersion && (profile == "permissions" || profile == "sandbox")) {
+		if profile != "tools" && profile != "hooks" && profile != "skills" && !((manifest.Version == ExperimentalVersion || manifest.Version == NativeVersion) && (profile == "permissions" || profile == "sandbox")) && !(manifest.Version == NativeVersion && (profile == "native" || profile == "plugins")) {
 			return nil, true, fmt.Errorf("manifest %q has unsupported 1.0 profile %q", path, profile)
 		}
 		seenProfiles[profile] = struct{}{}
 	}
 	knownCapabilities := map[string]bool{"instructions": true, "instructions.scoped": true, "skills": true, "mcp.stdio": true, "mcp.remote": true, "mcp.envRef": true, "hooks.command": true}
-	if manifest.Version == ExperimentalVersion {
+	if manifest.Version == ExperimentalVersion || manifest.Version == NativeVersion {
 		knownCapabilities["permissions"] = true
 		knownCapabilities["sandbox"] = true
 	}

@@ -31,7 +31,8 @@
         "Portable MCP environment references are refused because current documented project configuration exposes literal values",
         "Hook matchers are limited to PreToolUse, PostToolUse, PermissionRequest, PreCompact, and SubagentStart",
         "Prompt-mode project MCP requires trusted fixture folders",
-        "Command hook exit code 1 denies the tool call; failure semantics remain native"
+        "Command hook exit code 1 denies the tool call; failure semantics remain native",
+        "Draft.2 native configuration has scoped ownership and typed field mappings. Full feature coverage and native activation remain incomplete; this does not change adapter support status."
       ]
     },
     {
@@ -63,7 +64,9 @@
         "Remote header environment references remain projected; this does not establish the full mcp.envRef capability",
         "Catalogue-scoped disableAllHooks is refused; remove the hooks profile to remove owned hooks",
         "Hook matchers on UserPromptSubmit and Stop are refused",
-        "Command hook exit code 1 fails open; failure semantics remain native"
+        "Command hook exit code 1 fails open; failure semantics remain native",
+        "Draft.2 native configuration has scoped ownership and typed field mappings. Full feature coverage and native activation remain incomplete; this does not change adapter support status.",
+        "Draft.2 Codex telemetry is user-scoped. Local OTLP HTTP JSON logs and traces, including CA-only TLS and reference relocation, have bounded fixture evidence. Project telemetry is ignored. HTTP client identities fail in the pin and keep the complete exporter inactive. gRPC, binary encoding, metrics delivery, and live reload remain unverified."
       ]
     },
     {
@@ -109,6 +112,21 @@
       "codex": "native-shell-subset",
       "copilot": "refused",
       "claude": "refused"
+    },
+    "native_assessment": {
+      "report": "../WORKBENCH/evidence/ISOLATION_APPROVALS.md",
+      "coverage_extended": false,
+      "copilot_local_network": "Path denial blocks the named Unix socket; TCP, UDP, and IPv6 loopback remain allowed.",
+      "model_approvals": "Both native clients passed explicit allow/deny checks. Copilot unattended ask denies; Codex on-request permits sandbox command execution and is not portable ask.",
+      "trust_derived_codex": {
+        "version": "0.154.0",
+        "approval_policy_key": "omitted",
+        "trust_level": "untrusted",
+        "portable_ask": "refused",
+        "reason": "Safe shell requests approval, but built-in image reads complete without an approval request.",
+        "report": "../WORKBENCH/evidence/native-draft2-debug/codex-local-trust-image.json",
+        "fixture": "Local deterministic Responses provider; isolated native home; no copied credentials; disabled project configuration."
+      }
     }
   }
 }

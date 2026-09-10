@@ -20,6 +20,8 @@ const ownershipVersion = "1.0.0"
 
 // ApplyOptions controls conflict adoption and backups for an adapter projection.
 type ApplyOptions struct {
+	Scope        string
+	NativeHome   string
 	Experimental bool
 	CodexHome    string
 	Adopt        bool
@@ -36,6 +38,7 @@ type Action struct {
 
 // PlanResult is the stable plan/apply output contract.
 type PlanResult struct {
+	Native        *NativePlan   `json:"native,omitempty"`
 	Security      *SecurityPlan `json:"security,omitempty"`
 	SchemaVersion string        `json:"schema_version"`
 	Vendor        string        `json:"vendor"`
@@ -55,6 +58,7 @@ type SyncResult struct {
 }
 
 type ownershipState struct {
+	Links        map[string]string `json:"links,omitempty"`
 	Version      string            `json:"version"`
 	Vendor       string            `json:"vendor"`
 	Entries      map[string]string `json:"entries"`
@@ -64,6 +68,7 @@ type ownershipState struct {
 }
 
 type preparedProjection struct {
+	links   map[string]string
 	result  PlanResult
 	writes  map[string][]byte
 	deletes []string
@@ -76,6 +81,9 @@ func ImportRepository(vendor, root string, force, backup bool) error {
 }
 
 func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) error {
+	if options.Experimental || options.Scope != "" || options.NativeHome != "" {
+		return importNativeRepository(vendor, root, options)
+	}
 	if err := guardSecurityImport(filepath.Join(root, ".agents"), options.Experimental); err != nil {
 		return err
 	}
@@ -231,6 +239,9 @@ func PlanSync(vendor, root string, options ApplyOptions) (SyncResult, error) {
 // Every projection is prepared first. If one projection is not applicable,
 // no managed file is changed.
 func ApplySync(vendor, root string, options ApplyOptions) (SyncResult, error) {
+	if useNativeProjection(root, options) {
+		return applyNativeSync(vendor, root, options)
+	}
 	if options.Backup && !options.Force {
 		return SyncResult{}, errors.New("--backup requires --force")
 	}
@@ -249,6 +260,9 @@ func ApplySync(vendor, root string, options ApplyOptions) (SyncResult, error) {
 
 // ApplyProjection applies a previously describable projection using atomic writes.
 func ApplyProjection(vendor, root string, options ApplyOptions) (PlanResult, error) {
+	if useNativeProjection(root, options) {
+		return applyNativeProjection(vendor, root, options)
+	}
 	if options.Backup && !options.Force {
 		return PlanResult{}, errors.New("--backup requires --force")
 	}
@@ -320,6 +334,7 @@ func syncNotApplicableError(result SyncResult) error {
 }
 
 type managedSnapshot struct {
+	createdLink string
 	path        string
 	existed     bool
 	data        []byte
@@ -330,9 +345,19 @@ type managedWriter func(string, []byte, fs.FileMode) error
 
 func applyPreparedProjections(prepared []preparedProjection, options ApplyOptions, write managedWriter) error {
 	writes := map[string][]byte{}
+	links := map[string]string{}
 	deletes := map[string]struct{}{}
 	backupTargets := map[string]struct{}{}
 	for _, projection := range prepared {
+		for path, target := range projection.links {
+			if path != filepath.Join(projection.result.Root, "AGENTS.md") || target != ".agents/AGENTS.md" {
+				return fmt.Errorf("invalid instruction link operation %q", path)
+			}
+			if prior, exists := links[path]; exists && prior != target {
+				return fmt.Errorf("conflicting instruction links %q", path)
+			}
+			links[path] = target
+		}
 		for path, data := range projection.writes {
 			if _, duplicate := writes[path]; duplicate {
 				return fmt.Errorf("duplicate managed output %q", path)
@@ -363,6 +388,20 @@ func applyPreparedProjections(prepared []preparedProjection, options ApplyOption
 	for path := range deletes {
 		if _, collision := writes[path]; collision {
 			return fmt.Errorf("managed output %q is both written and deleted", path)
+		}
+	}
+	for path := range links {
+		if _, exists := writes[path]; exists {
+			return fmt.Errorf("instruction link %q also has a file write", path)
+		}
+		if _, exists := deletes[path]; exists {
+			return fmt.Errorf("instruction link %q also has a deletion", path)
+		}
+		if err := rejectSymlinkPath(path); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("instruction link destination %q appeared after planning", path)
 		}
 	}
 
@@ -401,6 +440,19 @@ func applyPreparedProjections(prepared []preparedProjection, options ApplyOption
 	}
 
 	writePaths := make([]string, 0, len(writes))
+	linkPaths := make([]string, 0, len(links))
+	for path := range links {
+		linkPaths = append(linkPaths, path)
+	}
+	sort.Strings(linkPaths)
+	createdLinks := []managedSnapshot{}
+	for _, path := range linkPaths {
+		if err := os.Symlink(links[path], path); err != nil {
+			return rollbackManagedFiles(createdLinks, map[string]struct{}{}, write, fmt.Errorf("create instruction link %q: %w", path, err))
+		}
+		createdLinks = append(createdLinks, managedSnapshot{path: path, createdLink: links[path]})
+	}
+	snapshots = append(snapshots, createdLinks...)
 	for path := range writes {
 		writePaths = append(writePaths, path)
 	}
@@ -467,6 +519,16 @@ func rollbackManagedFiles(snapshots []managedSnapshot, createdDirectories map[st
 	rollbackErrors := []string{}
 	for index := len(snapshots) - 1; index >= 0; index-- {
 		snapshot := snapshots[index]
+		if snapshot.createdLink != "" {
+			target, err := os.Readlink(snapshot.path)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil || target != snapshot.createdLink {
+				rollbackErrors = append(rollbackErrors, fmt.Sprintf("instruction link %q changed during rollback", snapshot.path))
+				continue
+			}
+		}
 		if snapshot.existed {
 			if err := write(snapshot.path, snapshot.data, snapshot.permissions); err != nil {
 				rollbackErrors = append(rollbackErrors, err.Error())
@@ -496,6 +558,12 @@ func rollbackManagedFiles(snapshots []managedSnapshot, createdDirectories map[st
 }
 
 func prepareProjection(vendor, root string, options ApplyOptions) (preparedProjection, error) {
+	if useNativeProjection(root, options) {
+		return prepareNativeProjection(vendor, root, options)
+	}
+	if err := validateNativeScope(options.Scope, options.NativeHome, options.Experimental); err != nil {
+		return preparedProjection{}, err
+	}
 	vendor, err := normalizeStableVendor(vendor)
 	if err != nil {
 		return preparedProjection{}, err
@@ -569,6 +637,14 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 	}
 	writes := map[string][]byte{}
 	next := ownershipState{Version: ownershipVersion, Vendor: vendor, Entries: map[string]string{}, Files: map[string]string{}}
+	links, ownedLinks, err := prepareRootInstructionLink(root, state, options)
+	if err != nil {
+		return preparedProjection{}, err
+	}
+	next.Links = ownedLinks
+	for path, target := range links {
+		result.Actions = append(result.Actions, Action{Operation: "create-link", Path: filepath.Base(path), Detail: target})
+	}
 	deletes := []string{}
 	if securityHandled {
 		addWrite(&result, writes, root, filepath.Join(root, ".codex", "config.toml"), securityData)
@@ -697,7 +773,7 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		result.Actions = append(result.Actions, Action{Operation: "delete", Path: relative})
 		deletes = append(deletes, path)
 	}
-	return preparedProjection{result: result, writes: writes, deletes: deletes, state: next}, nil
+	return preparedProjection{result: result, writes: writes, deletes: deletes, links: links, state: next}, nil
 }
 
 func normalizeStableVendor(vendor string) (string, error) {
@@ -1070,6 +1146,14 @@ func prepareSkillWrites(root string, state ownershipState, options ApplyOptions)
 func prepareClaudeBridges(root string, state ownershipState, options ApplyOptions) (map[string][]byte, map[string]string, error) {
 	writes := map[string][]byte{}
 	hashes := map[string]string{}
+	if _, err := os.Lstat(filepath.Join(root, "AGENTS.md")); errors.Is(err, fs.ErrNotExist) {
+		path := filepath.Join(root, "CLAUDE.md")
+		data := []byte("@AGENTS.md\n")
+		if err := checkOwnedFile(path, state.Files["CLAUDE.md"], data, options); err != nil {
+			return nil, nil, err
+		}
+		writes[path], hashes["CLAUDE.md"] = data, digest(data)
+	}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1087,8 +1171,8 @@ func prepareClaudeBridges(root string, state ownershipState, options ApplyOption
 		if entry.Name() != "AGENTS.md" {
 			return nil
 		}
-		if !entry.Type().IsRegular() && path != filepath.Join(root, "AGENTS.md") {
-			return fmt.Errorf("unsupported non-regular instruction file %q", path)
+		if err := validateInstructionFile(path, filepath.Join(filepath.Dir(path), ".agents", "AGENTS.md")); err != nil {
+			return err
 		}
 		destination := filepath.Join(filepath.Dir(path), "CLAUDE.md")
 		relative, _ := filepath.Rel(root, destination)
@@ -1176,6 +1260,11 @@ func loadOwnership(root, vendor string) (ownershipState, error) {
 	}
 	if state.Files == nil {
 		state.Files = map[string]string{}
+	}
+	for path, target := range state.Links {
+		if path != "AGENTS.md" || target != ".agents/AGENTS.md" {
+			return state, fmt.Errorf("unsupported instruction link ownership")
+		}
 	}
 	return state, nil
 }

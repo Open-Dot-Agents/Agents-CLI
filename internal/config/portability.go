@@ -28,7 +28,20 @@ func checkUnselectedSkills(vendor, root string, selected map[string]bool) error 
 	if err != nil {
 		return fmt.Errorf("inspect unselected canonical skills: %w", err)
 	}
-	if len(entries) > 0 {
+	content := false
+	for _, entry := range entries {
+		if entry.Name() == ".gitkeep" && entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if info.Size() == 0 {
+				continue
+			}
+		}
+		content = true
+	}
+	if content {
 		return fmt.Errorf("ODA-ADAPTER-0003: %s cannot preserve an unselected skills profile while .agents/skills contains content; projection refused; direct harness use can still discover these skills", vendor)
 	}
 	return nil
