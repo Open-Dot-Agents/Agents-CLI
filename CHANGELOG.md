@@ -4,6 +4,12 @@ All notable changes to the reference CLI are documented here.
 
 ## Unreleased
 
+- Add explicit opt-in for the 1.1 security draft, strict policy validation,
+  normalized refusal plans, and import/export protection against policy loss.
+  Add the pinned Codex Linux direct-shell subset, explicit native-home checks,
+  ownership, removal, and alias refusal. Other security policies remain refused.
+  Stable behavior stays at 1.0.
+
 - Require the manifest for public repository validation and projection.
 - Refuse explicitly required unsupported capabilities before writes.
 - Preserve remote header environment indirection in legacy Codex and Claude

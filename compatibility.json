@@ -95,5 +95,20 @@
         "Hook matchers on UserPromptSubmit and Stop are refused"
       ]
     }
-  ]
+  ],
+  "experimental": {
+    "standard_version": "1.1.0-draft.1",
+    "profiles": [
+      "permissions",
+      "sandbox"
+    ],
+    "status": "partial",
+    "evidence_scope": "Codex 0.154.0 Linux amd64 direct sandbox subset. Other security requests refuse. Full adapter support is not established.",
+    "report": "../WORKBENCH/evidence/CODEX_SECURITY_SUBSET.md",
+    "adapters": {
+      "codex": "native-shell-subset",
+      "copilot": "refused",
+      "claude": "refused"
+    }
+  }
 }

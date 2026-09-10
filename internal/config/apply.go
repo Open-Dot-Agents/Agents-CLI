@@ -20,9 +20,11 @@ const ownershipVersion = "1.0.0"
 
 // ApplyOptions controls conflict adoption and backups for an adapter projection.
 type ApplyOptions struct {
-	Adopt  bool
-	Force  bool
-	Backup bool
+	Experimental bool
+	CodexHome    string
+	Adopt        bool
+	Force        bool
+	Backup       bool
 }
 
 // Action is one planned managed-file operation.
@@ -34,12 +36,13 @@ type Action struct {
 
 // PlanResult is the stable plan/apply output contract.
 type PlanResult struct {
-	SchemaVersion string   `json:"schema_version"`
-	Vendor        string   `json:"vendor"`
-	Root          string   `json:"root"`
-	Applicable    bool     `json:"applicable"`
-	Actions       []Action `json:"actions"`
-	Diagnostics   []string `json:"diagnostics,omitempty"`
+	Security      *SecurityPlan `json:"security,omitempty"`
+	SchemaVersion string        `json:"schema_version"`
+	Vendor        string        `json:"vendor"`
+	Root          string        `json:"root"`
+	Applicable    bool          `json:"applicable"`
+	Actions       []Action      `json:"actions"`
+	Diagnostics   []string      `json:"diagnostics,omitempty"`
 }
 
 // SyncResult is the aggregate plan/apply contract for one or all stable
@@ -52,11 +55,12 @@ type SyncResult struct {
 }
 
 type ownershipState struct {
-	Version   string            `json:"version"`
-	Vendor    string            `json:"vendor"`
-	Entries   map[string]string `json:"entries"`
-	Files     map[string]string `json:"files,omitempty"`
-	HooksHash string            `json:"hooks_hash,omitempty"`
+	Version      string            `json:"version"`
+	Vendor       string            `json:"vendor"`
+	Entries      map[string]string `json:"entries"`
+	Files        map[string]string `json:"files,omitempty"`
+	HooksHash    string            `json:"hooks_hash,omitempty"`
+	SecurityHash string            `json:"security_hash,omitempty"`
 }
 
 type preparedProjection struct {
@@ -68,6 +72,14 @@ type preparedProjection struct {
 
 // ImportRepository imports native configuration into the canonical .agents tree.
 func ImportRepository(vendor, root string, force, backup bool) error {
+	return ImportRepositoryWithOptions(vendor, root, WriteOptions{Force: force, Backup: backup})
+}
+
+func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) error {
+	if err := guardSecurityImport(filepath.Join(root, ".agents"), options.Experimental); err != nil {
+		return err
+	}
+	force, backup := options.Force, options.Backup
 	vendor, err := normalizeStableVendor(vendor)
 	if err != nil {
 		return err
@@ -489,7 +501,7 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		return preparedProjection{}, err
 	}
 	agentsRoot := filepath.Join(root, ".agents")
-	if err := ValidateRepository(agentsRoot); err != nil {
+	if err := ValidateRepositoryWithOptions(agentsRoot, options.Experimental); err != nil {
 		return preparedProjection{}, err
 	}
 	profiles, _, err := validateManifest(filepath.Join(agentsRoot, "manifest.json"))
@@ -505,7 +517,45 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		return preparedProjection{}, err
 	}
 	result := PlanResult{SchemaVersion: ownershipVersion, Vendor: vendor, Root: root, Applicable: true, Actions: []Action{}}
-	if diagnostics, err := requiredCapabilityDiagnostics(vendor, agentsRoot); err != nil {
+	security, diagnostics, err := securityPreflight(vendor, agentsRoot, selected)
+	if err != nil {
+		return preparedProjection{}, err
+	}
+	var securityData []byte
+	var securityHash string
+	securityHandled := false
+	if security != nil {
+		result.Security = security
+		if vendor == "codex" && options.CodexHome != "" {
+			securityData, securityHash, err = prepareCodexSecurity(root, options, selected, state, security)
+			if err != nil {
+				result.Applicable = false
+				result.Diagnostics = append(diagnostics, err.Error())
+				return preparedProjection{result: result}, nil
+			}
+			securityHandled = true
+			for _, diagnostic := range diagnostics {
+				if strings.HasPrefix(diagnostic, "ODA-SECURITY-0005:") {
+					result.Diagnostics = append(result.Diagnostics, diagnostic)
+				}
+			}
+		} else {
+			result.Applicable = false
+			result.Diagnostics = diagnostics
+			return preparedProjection{result: result}, nil
+		}
+	} else if vendor == "codex" && state.SecurityHash != "" {
+		if !options.Experimental {
+			return preparedProjection{}, securityError("native security removal requires --experimental")
+		}
+		securityData, securityHash, err = prepareCodexSecurity(root, options, selected, state, nil)
+		if err != nil {
+			return preparedProjection{}, err
+		}
+		securityHandled = true
+		result.Security = &SecurityPlan{StandardVersion: ExperimentalVersion, Status: "native-removal", ProjectedSettings: map[string]any{}, AutomaticGrants: []string{}, UnresolvedControls: []string{}, EvidenceScope: "The recorded direct invocation uses an explicit profile and will fail after removal. Other native invocations are outside this subset."}
+	}
+	if diagnostics, err := requiredCapabilityDiagnosticsForSecurity(vendor, agentsRoot, security); err != nil {
 		return preparedProjection{}, err
 	} else if len(diagnostics) > 0 {
 		result.Applicable = false
@@ -520,6 +570,10 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 	writes := map[string][]byte{}
 	next := ownershipState{Version: ownershipVersion, Vendor: vendor, Entries: map[string]string{}, Files: map[string]string{}}
 	deletes := []string{}
+	if securityHandled {
+		addWrite(&result, writes, root, filepath.Join(root, ".codex", "config.toml"), securityData)
+		next.SecurityHash = securityHash
+	}
 
 	if selected["tools"] || len(state.Entries) > 0 {
 		var servers map[string]MCPServer
@@ -538,7 +592,11 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 			var data []byte
 			var entryHashes map[string]string
 			if vendor == "codex" {
-				data, entryHashes, err = mergeCodex(path, servers, state, options)
+				if base, ok := writes[path]; ok {
+					data, entryHashes, err = mergeCodexBytes(base, servers, state, options)
+				} else {
+					data, entryHashes, err = mergeCodex(path, servers, state, options)
+				}
 			} else {
 				data, entryHashes, err = mergeJSONVendor(vendor, path, servers, state, options)
 			}
@@ -739,6 +797,10 @@ func mergeCodex(path string, desired map[string]MCPServer, state ownershipState,
 	} else if err != nil {
 		return nil, nil, err
 	}
+	return mergeCodexBytes(data, desired, state, options)
+}
+
+func mergeCodexBytes(data []byte, desired map[string]MCPServer, state ownershipState, options ApplyOptions) ([]byte, map[string]string, error) {
 	blocks, prefix, suffixes, err := splitCodexBlocks(data)
 	if err != nil {
 		return nil, nil, err
@@ -1079,6 +1141,12 @@ func addWrite(result *PlanResult, writes map[string][]byte, root, path string, d
 	relative, err := filepath.Rel(root, path)
 	if err != nil {
 		relative = path
+	}
+	for i, action := range result.Actions {
+		if action.Path == filepath.ToSlash(relative) {
+			result.Actions = append(result.Actions[:i], result.Actions[i+1:]...)
+			break
+		}
 	}
 	result.Actions = append(result.Actions, Action{Operation: operation, Path: filepath.ToSlash(relative), Detail: detail})
 	writes[path] = data

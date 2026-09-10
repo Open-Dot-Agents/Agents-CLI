@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Native discovery can read this directory without consulting the manifest.
@@ -87,4 +88,22 @@ func requiredCapabilityDiagnostics(vendor, source string) ([]string, error) {
 	}
 	sort.Strings(diagnostics)
 	return diagnostics, nil
+}
+
+func requiredCapabilityDiagnosticsForSecurity(vendor, root string, security *SecurityPlan) ([]string, error) {
+	diagnostics, err := requiredCapabilityDiagnostics(vendor, root)
+	if err != nil || security == nil || security.Status != "native-subset" {
+		return diagnostics, err
+	}
+	result := []string{}
+	for _, diagnostic := range diagnostics {
+		if security.Declared.Sandbox != nil && strings.Contains(diagnostic, `capability "sandbox"`) {
+			continue
+		}
+		if security.Declared.Permissions != nil && strings.Contains(diagnostic, `capability "permissions"`) {
+			continue
+		}
+		result = append(result, diagnostic)
+	}
+	return result, nil
 }

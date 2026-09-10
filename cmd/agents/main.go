@@ -45,6 +45,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return config.Init(*root, *force)
 	case "validate":
 		flags := flag.NewFlagSet("validate", flag.ContinueOnError)
+		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		root := flags.String("root", ".", "repository root")
 		format := flags.String("format", "text", "output format: text or json")
@@ -60,10 +61,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		if err := config.ValidateRepository(filepath.Join(*root, ".agents")); err != nil {
+		standardVersion := config.ValidationStandardVersion(filepath.Join(*root, ".agents"), *experimental)
+		if err := config.ValidateRepositoryWithOptions(filepath.Join(*root, ".agents"), *experimental); err != nil {
 			if *format == "json" {
 				_ = json.NewEncoder(stdout).Encode(map[string]any{
-					"schemaVersion": "1.0.0", "standardVersion": "1.0.0",
+					"schemaVersion": standardVersion, "standardVersion": standardVersion,
 					"implementation": "reference-cli", "implementationVersion": version,
 					"class": "repository", "passed": false,
 					"checks": []map[string]any{{"id": "repository.validate", "passed": false, "diagnostic": "ODA-VALIDATE-0001", "message": err.Error()}},
@@ -73,7 +75,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		if *format == "json" {
 			return json.NewEncoder(stdout).Encode(map[string]any{
-				"schemaVersion": "1.0.0", "standardVersion": "1.0.0",
+				"schemaVersion": standardVersion, "standardVersion": standardVersion,
 				"implementation": "reference-cli", "implementationVersion": version,
 				"class": "repository", "passed": true,
 				"checks": []map[string]any{{"id": "repository.validate", "passed": true}},
@@ -82,6 +84,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "capabilities":
 		flags := flag.NewFlagSet("capabilities", flag.ContinueOnError)
+		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		vendor := flags.String("vendor", "", "vendor: copilot, codex, or claude")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -96,13 +99,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *vendor == "" {
 			return errors.New("--vendor is required")
 		}
-		capabilities, err := config.VendorCapabilities(*vendor)
+		capabilities, err := config.VendorCapabilitiesWithOptions(*vendor, *experimental)
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(capabilities)
 	case "import":
 		flags := flag.NewFlagSet("import", flag.ContinueOnError)
+		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		vendor := flags.String("vendor", "", "source vendor: copilot, codex, or claude")
 		root := flags.String("root", ".", "repository root")
@@ -120,9 +124,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *vendor == "" {
 			return errors.New("--vendor is required")
 		}
-		return config.ImportRepository(*vendor, *root, *force, *backup)
+		return config.ImportRepositoryWithOptions(*vendor, *root, config.WriteOptions{Force: *force, Backup: *backup, Experimental: *experimental})
 	case "sync":
 		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
+		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
+		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		vendor := flags.String("vendor", "", "destination vendor: all, copilot, codex, or claude")
 		root := flags.String("root", ".", "repository root")
@@ -146,7 +152,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome}
 		var result config.SyncResult
 		var err error
 		if *check {
@@ -169,6 +175,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "plan", "apply":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
+		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		vendor := flags.String("vendor", "", "destination vendor: copilot, codex, or claude")
 		root := flags.String("root", ".", "repository root")
@@ -192,7 +200,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup}
+		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome}
 		var result config.PlanResult
 		var err error
 		if args[0] == "plan" || *check {
@@ -205,6 +213,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		if err != nil {
 			return err
+		}
+		if *check && !result.Applicable {
+			return errors.New("projection is not applicable")
 		}
 		if *check {
 			for _, action := range result.Actions {
@@ -240,13 +251,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   agents init [--root <directory>] [--force]
-  agents validate [--root <directory>] [--format text|json]
-  agents capabilities --vendor <copilot|codex|claude>
+  agents validate [--experimental] [--root <directory>] [--format text|json]
+  agents capabilities [--experimental] --vendor <copilot|codex|claude>
   agents version
-  agents import --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
-  agents plan --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force]
-  agents apply --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup]
-  agents sync --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup]
+  agents import [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
+  agents plan [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--codex-home <directory>]
+  agents apply [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup] [--codex-home <directory>]
+  agents sync [--experimental] --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup] [--codex-home <directory>]
+
+The 1.1 draft requires --experimental. The Codex Linux direct sandbox subset
+also requires --codex-home and existing native trust. Other security requests
+and native security import are refused. No runtime launcher or trust grant is
+installed. Use --format json to inspect policy, invocation, and authority limits.
 
 Canonical instructions, portable metadata, tools, and skills live below
 .agents. A root AGENTS.md compatibility link and nested AGENTS.md files provide

@@ -110,23 +110,25 @@ type codexServer struct {
 
 // WriteOptions controls destructive configuration writes.
 type WriteOptions struct {
-	Force  bool
-	Backup bool
+	Experimental bool
+	Force        bool
+	Backup       bool
 }
 
 // Capabilities describes the repository-scoped configuration supported for a vendor.
 type Capabilities struct {
-	Vendor           string            `json:"vendor"`
-	Name             string            `json:"name"`
-	Harness          string            `json:"harness"`
-	HarnessVersion   string            `json:"harness_version,omitempty"`
-	Status           string            `json:"status"`
-	Profiles         []string          `json:"profiles"`
-	ProfileStatus    map[string]string `json:"profile_status"`
-	CapabilityStatus map[string]string `json:"capability_status"`
-	Paths            map[string]string `json:"paths"`
-	Evidence         string            `json:"evidence"`
-	Limitations      []string          `json:"limitations,omitempty"`
+	Experimental     *ExperimentalCapabilities `json:"experimental,omitempty"`
+	Vendor           string                    `json:"vendor"`
+	Name             string                    `json:"name"`
+	Harness          string                    `json:"harness"`
+	HarnessVersion   string                    `json:"harness_version,omitempty"`
+	Status           string                    `json:"status"`
+	Profiles         []string                  `json:"profiles"`
+	ProfileStatus    map[string]string         `json:"profile_status"`
+	CapabilityStatus map[string]string         `json:"capability_status"`
+	Paths            map[string]string         `json:"paths"`
+	Evidence         string                    `json:"evidence"`
+	Limitations      []string                  `json:"limitations,omitempty"`
 }
 
 type compatibilitySummary struct {
@@ -332,7 +334,12 @@ func ExportTargetPaths(vendor, source, output string) ([]string, error) {
 }
 
 // Validate verifies the structure and supported contents of a canonical .agents tree.
-func Validate(root string) error {
+func Validate(root string) error { return validateWithOptions(root, false) }
+
+func validateWithOptions(root string, experimental bool) error {
+	if err := experimentalGate(root, experimental); err != nil {
+		return err
+	}
 	if err := requireDirectory(root, "canonical root"); err != nil {
 		return err
 	}
@@ -398,6 +405,9 @@ func Validate(root string) error {
 			return err
 		}
 	}
+	if _, err := readSecurityPolicy(root, selected); err != nil {
+		return err
+	}
 	if selected["skills"] {
 		return validateSkills(filepath.Join(root, "skills"))
 	}
@@ -410,6 +420,9 @@ func Import(vendor, source, output string, force bool) error {
 
 // ImportWithOptions imports a vendor configuration into the portable model.
 func ImportWithOptions(vendor, source, output string, options WriteOptions) error {
+	if err := guardSecurityImport(output, options.Experimental); err != nil {
+		return err
+	}
 	if err := validateWriteOptions(options); err != nil {
 		return err
 	}
@@ -450,6 +463,9 @@ func Export(vendor, source, output string, force bool) error {
 
 // ExportWithOptions exports the portable model to a vendor configuration.
 func ExportWithOptions(vendor, source, output string, options WriteOptions) error {
+	if err := experimentalGate(source, options.Experimental); err != nil {
+		return err
+	}
 	if err := validateWriteOptions(options); err != nil {
 		return err
 	}
@@ -460,6 +476,11 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 	profiles, err := canonicalProfiles(source)
 	if err != nil {
 		return err
+	}
+	if _, diagnostics, err := securityPreflight(vendor, source, profiles); err != nil {
+		return err
+	} else if len(diagnostics) > 0 {
+		return errors.New(strings.Join(diagnostics, "; "))
 	}
 	var servers map[string]MCPServer
 	if profiles["tools"] {
@@ -521,6 +542,9 @@ func Convert(from, to, source, output string, force bool) error {
 
 // ConvertWithOptions converts one vendor configuration directly to another.
 func ConvertWithOptions(from, to, source, output string, options WriteOptions) error {
+	if options.Experimental {
+		return errors.New("ODA-SECURITY-0004: native security conversion is not implemented")
+	}
 	if err := validateWriteOptions(options); err != nil {
 		return err
 	}
@@ -1266,7 +1290,7 @@ func canonicalProfiles(root string) (map[string]bool, error) {
 	}
 	for _, profile := range profiles {
 		switch profile {
-		case "tools", "hooks", "skills":
+		case "tools", "hooks", "skills", "permissions", "sandbox":
 			selected[profile] = true
 		}
 	}
@@ -1866,7 +1890,7 @@ func validateManifest(path string) ([]string, bool, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, true, fmt.Errorf("parse manifest %q: %w", path, err)
 	}
-	if manifest.Version != manifestVersion {
+	if manifest.Version != manifestVersion && manifest.Version != ExperimentalVersion {
 		return nil, true, fmt.Errorf("manifest %q has unsupported version %q (supported: %s)", path, manifest.Version, manifestVersion)
 	}
 	if manifest.Profiles == nil {
@@ -1880,12 +1904,16 @@ func validateManifest(path string) ([]string, bool, error) {
 		if _, seen := seenProfiles[profile]; seen {
 			return nil, true, fmt.Errorf("manifest %q has duplicate profile %q", path, profile)
 		}
-		if profile != "tools" && profile != "hooks" && profile != "skills" {
+		if profile != "tools" && profile != "hooks" && profile != "skills" && !(manifest.Version == ExperimentalVersion && (profile == "permissions" || profile == "sandbox")) {
 			return nil, true, fmt.Errorf("manifest %q has unsupported 1.0 profile %q", path, profile)
 		}
 		seenProfiles[profile] = struct{}{}
 	}
 	knownCapabilities := map[string]bool{"instructions": true, "instructions.scoped": true, "skills": true, "mcp.stdio": true, "mcp.remote": true, "mcp.envRef": true, "hooks.command": true}
+	if manifest.Version == ExperimentalVersion {
+		knownCapabilities["permissions"] = true
+		knownCapabilities["sandbox"] = true
+	}
 	seenCapabilities := map[string]bool{}
 	for _, capability := range manifest.Requires {
 		if !knownCapabilities[capability] {

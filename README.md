@@ -150,3 +150,16 @@ capability that the adapter declares unsupported, even if no selected server
 currently uses it. Keep `requires` aligned with the intended configuration.
 Another refusal can block profile cleanup; never assume that a failed apply
 removed existing native configuration.
+
+## Experimental security draft
+
+The `1.1.0-draft.1` contract adds permissions and sandbox profiles behind
+`--experimental`. The Codex 0.154.0 Linux amd64 direct-shell subset can project
+native security settings through plan/apply/sync with `--codex-home`. The native
+home must already trust the workspace. Use the exact invocation and replacement
+environment from a fresh plan. No launcher or trust grant is installed.
+
+Other security requests and native security import remain refused before
+writes. Force does not override these refusals. The legacy export API also
+refuses selected security policy. See [usage and limits](../docs/SECURITY_PROFILES.md)
+and the [draft specification](../SPEC/spec/1.1-draft/SPECIFICATION.md).

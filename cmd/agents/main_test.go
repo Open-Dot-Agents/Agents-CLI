@@ -186,3 +186,45 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestSecurityDraftPublicCommands(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ".agents", "AGENTS.md"), "Use policy.\n")
+	writeFile(t, filepath.Join(root, ".agents", "manifest.json"), `{"version":"1.1.0-draft.1","profiles":["permissions"]}`)
+	writeFile(t, filepath.Join(root, ".agents", "permissions", "permissions.json"), `{"version":"1.1.0-draft.1","coverage":["shell"],"default":"deny","rules":[]}`)
+	for _, command := range []string{"validate", "plan", "apply", "sync", "import"} {
+		for _, experimental := range []bool{false, true} {
+			args := []string{command, "--root", root}
+			if command != "validate" {
+				args = append(args, "--vendor", "codex")
+			}
+			if command != "import" {
+				args = append(args, "--format", "json")
+			}
+			if experimental {
+				args = append(args, "--experimental")
+			}
+			stdout := &bytes.Buffer{}
+			err := run(args, stdout, &bytes.Buffer{})
+			wantOK := experimental && (command == "validate" || command == "plan")
+			if (err == nil) != wantOK {
+				t.Fatalf("%v: %s %v", args, stdout.String(), err)
+			}
+			if command == "validate" && experimental {
+				var result map[string]any
+				if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				if result["standardVersion"] != "1.1.0-draft.1" || result["schemaVersion"] != "1.1.0-draft.1" {
+					t.Fatal(result)
+				}
+			}
+		}
+	}
+	for _, command := range []string{"plan", "apply", "sync"} {
+		err := run([]string{command, "--experimental", "--check", "--vendor", "codex", "--root", root}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatal(command + " check accepted refusal")
+		}
+	}
+}
