@@ -23,9 +23,10 @@
         "mcp.envRef": "unsupported",
         "hooks.command": "projection-only"
       },
-      "evidence": "Local native feature tests recorded with latest pinned copilot; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; environment-reference mappings remain refused",
+      "evidence": "Refusal guards are implemented; local native runs and retries are recorded separately; full capability support is not established",
       "limitations": [
-        "Native discovery exposes canonical skills when the skills profile is unselected",
+        "Unselected non-empty canonical skills are refused; direct harness use can still discover them",
+        "Native skill use has varied across runs; passing discovery alone does not establish support",
         "Native evidence covers Linux fixtures, not other operating systems",
         "Portable MCP environment references are refused because current documented project configuration exposes literal values",
         "Hook matchers are limited to PreToolUse, PostToolUse, PermissionRequest, PreCompact, and SubagentStart",
@@ -51,15 +52,15 @@
         "skills": "projection-only",
         "mcp.stdio": "projection-only",
         "mcp.remote": "projection-only",
-        "mcp.envRef": "transformed",
+        "mcp.envRef": "unsupported",
         "hooks.command": "projection-only"
       },
-      "evidence": "Local native feature tests recorded with latest pinned codex; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; missing stdio environment references also fail",
+      "evidence": "Refusal guards are implemented; local native runs and retries are recorded separately; full capability support is not established",
       "limitations": [
-        "Native discovery exposes canonical skills when the skills profile is unselected",
-        "Missing stdio environment references do not stop native server activation",
+        "Unselected non-empty canonical skills are refused; direct harness use can still discover them",
+        "Stdio environment references are refused because missing runtime sources do not prevent server activation",
         "Native evidence covers Linux fixtures, not other operating systems",
-        "Stdio environment references must use the same source and target variable name",
+        "Remote header environment references remain projected; this does not establish the full mcp.envRef capability",
         "Catalogue-scoped disableAllHooks is refused; remove the hooks profile to remove owned hooks",
         "Hook matchers on UserPromptSubmit and Stop are refused",
         "Command hook exit code 1 fails open; failure semantics remain native"

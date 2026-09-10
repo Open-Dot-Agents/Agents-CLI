@@ -344,7 +344,7 @@ func TestExportHonorsSelectedManifestProfiles(t *testing.T) {
 	writeFixture(t, filepath.Join(output, ".github", "mcp.json"), `{"mcpServers":{"keep":{"command":"keep"}}}`)
 	writeFixture(t, filepath.Join(output, ".agents", "skills", "keep", "SKILL.md"), "# Keep\n")
 
-	if err := ExportWithOptions("copilot", agentsRoot, output, WriteOptions{Force: true, Backup: true}); err != nil {
+	if err := ExportWithOptions("claude", agentsRoot, output, WriteOptions{Force: true, Backup: true}); err != nil {
 		t.Fatalf("export instructions-only manifest: %v", err)
 	}
 	instructions, err := os.ReadFile(filepath.Join(output, "AGENTS.md"))

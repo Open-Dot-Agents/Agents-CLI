@@ -2,6 +2,20 @@
 
 All notable changes to the reference CLI are documented here.
 
+## Unreleased
+
+- Require the manifest for public repository validation and projection.
+- Refuse explicitly required unsupported capabilities before writes.
+- Preserve remote header environment indirection in legacy Codex and Claude
+  exports instead of writing a literal URN.
+
+- Refuse unselected canonical skill content for Codex and Copilot before
+  plan/apply/sync/export writes. Force does not bypass the refusal.
+- Refuse Codex stdio environment references whose missing runtime source does
+  not prevent native server activation. Preserve remote header mapping.
+- Require all three supported adapter rows and durable evidence identifiers
+  when checking release readiness.
+
 ## [1.0.0] - 2026-08-12
 
 ### Added

@@ -81,7 +81,9 @@ select `tools` again, and review `plan`. Use `--adopt` only when the existing
 entries are equivalent to the reviewed catalogue. Apply to restore ownership,
 then remove `tools` and apply again. Do not infer ownership from server names.
 
-Codex environment URNs become `env_vars` or `env_http_headers`. Claude Code
+Codex remote header URNs become `env_http_headers`. Codex stdio environment
+references are refused because missing runtime variables do not prevent server
+activation. Claude Code
 uses `${VARIABLE}` expansion. Copilot CLI projections containing portable
 environment references are refused because its current documented project
 configuration exposes literal environment and header values.
@@ -117,3 +119,34 @@ before writes with `ODA-HOOK-0001`; a failed apply leaves any earlier native
 hooks active. To remove owned hooks, remove `hooks` from the manifest profiles
 and apply. Claude keeps unrelated settings and tracks only the owned `hooks`
 field. Changing unrelated settings does not cause an ownership conflict.
+
+## Portability refusals
+
+`plan`, `apply`, and `sync` refuse an unselected skills profile for Codex and
+Copilot when the target `.agents/skills` directory contains content.
+`export` applies the same check to its output repository. The check leaves
+canonical content, owned native files, unrelated settings, and backups
+unchanged. `--force` does not bypass it. Empty or absent skills directories
+remain valid.
+
+`ODA-ADAPTER-0003` identifies this refusal. It does not disable native skill
+discovery: direct use of the harness can still read the canonical skills.
+Select the profile only when you intend to expose those skills. No automatic
+move or deletion of canonical content is performed.
+
+`ODA-ADAPTER-0004` refuses Codex stdio environment references even when the
+variable exists during apply. Apply cannot establish that the variable will
+exist at runtime. Remote header references keep their existing mapping.
+Existing native configuration from an earlier apply remains in place after
+refusal. Remove the tools profile and apply to remove owned MCP entries;
+review the resulting plan first. Do not replace a reference with a secret value.
+
+These refusals do not make an adapter conformance-supported.
+
+The public `validate`, `plan`, `apply`, and `sync` commands require the
+canonical manifest. Legacy internal import/export helpers retain their
+unversioned input handling. `ODA-ADAPTER-0005` refuses an explicitly required
+capability that the adapter declares unsupported, even if no selected server
+currently uses it. Keep `requires` aligned with the intended configuration.
+Another refusal can block profile cleanup; never assume that a failed apply
+removed existing native configuration.

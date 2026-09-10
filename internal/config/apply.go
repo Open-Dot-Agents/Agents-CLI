@@ -489,7 +489,7 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		return preparedProjection{}, err
 	}
 	agentsRoot := filepath.Join(root, ".agents")
-	if err := Validate(agentsRoot); err != nil {
+	if err := ValidateRepository(agentsRoot); err != nil {
 		return preparedProjection{}, err
 	}
 	profiles, _, err := validateManifest(filepath.Join(agentsRoot, "manifest.json"))
@@ -505,6 +505,18 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 		return preparedProjection{}, err
 	}
 	result := PlanResult{SchemaVersion: ownershipVersion, Vendor: vendor, Root: root, Applicable: true, Actions: []Action{}}
+	if diagnostics, err := requiredCapabilityDiagnostics(vendor, agentsRoot); err != nil {
+		return preparedProjection{}, err
+	} else if len(diagnostics) > 0 {
+		result.Applicable = false
+		result.Diagnostics = diagnostics
+		return preparedProjection{result: result}, nil
+	}
+	if err := checkUnselectedSkills(vendor, root, selected); err != nil {
+		result.Applicable = false
+		result.Diagnostics = append(result.Diagnostics, err.Error())
+		return preparedProjection{result: result}, nil
+	}
 	writes := map[string][]byte{}
 	next := ownershipState{Version: ownershipVersion, Vendor: vendor, Entries: map[string]string{}, Files: map[string]string{}}
 	deletes := []string{}
@@ -517,19 +529,9 @@ func prepareProjection(vendor, root string, options ApplyOptions) (preparedProje
 				return preparedProjection{}, err
 			}
 		}
-		for name, server := range servers {
-			if vendor == "copilot" && (len(server.Env) > 0 || len(server.Headers) > 0) {
-				result.Applicable = false
-				result.Diagnostics = append(result.Diagnostics, fmt.Sprintf("ODA-ADAPTER-0001: Copilot cannot safely represent environment reference for MCP server %q", name))
-			}
-			if vendor == "codex" {
-				for target, reference := range server.Env {
-					if target != environmentReferenceName(reference) {
-						result.Applicable = false
-						result.Diagnostics = append(result.Diagnostics, fmt.Sprintf("ODA-ADAPTER-0002: Codex cannot rename environment variable %q for MCP server %q", target, name))
-					}
-				}
-			}
+		if diagnostics := referenceDiagnostics(vendor, servers); len(diagnostics) > 0 {
+			result.Applicable = false
+			result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		}
 		if result.Applicable {
 			path := vendorMCPPath(vendor, root)

@@ -60,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		if err := config.Validate(filepath.Join(*root, ".agents")); err != nil {
+		if err := config.ValidateRepository(filepath.Join(*root, ".agents")); err != nil {
 			if *format == "json" {
 				_ = json.NewEncoder(stdout).Encode(map[string]any{
 					"schemaVersion": "1.0.0", "standardVersion": "1.0.0",

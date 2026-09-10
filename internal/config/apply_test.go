@@ -13,6 +13,7 @@ import (
 func TestCodexApplyPreservesUnrelatedTOMLAndTranslatesReferences(t *testing.T) {
 	root := t.TempDir()
 	writeRepositoryFixture(t, root)
+	writeFixture(t, filepath.Join(root, ".agents", "tools", "mcp.json"), `{"mcpServers":{"local":{"type":"stdio","command":"server"},"remote":{"type":"remote","url":"https://example.com/mcp","headers":{"Authorization":"urn:open-dot-agents:env:AUTH_TOKEN"}}}}`)
 	writeFixture(t, filepath.Join(root, ".codex", "config.toml"), "# keep this comment\nmodel = 'gpt-test'\n")
 	result, err := ApplyProjection("codex", root, ApplyOptions{})
 	if err != nil || !result.Applicable {
@@ -23,7 +24,7 @@ func TestCodexApplyPreservesUnrelatedTOMLAndTranslatesReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{"# keep this comment", "model = 'gpt-test'", "env_vars = ['TOKEN']", "[mcp_servers.remote.env_http_headers]", "Authorization = 'AUTH_TOKEN'"} {
+	for _, expected := range []string{"# keep this comment", "model = 'gpt-test'", "[mcp_servers.remote.env_http_headers]", "Authorization = 'AUTH_TOKEN'"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("missing %q in:\n%s", expected, text)
 		}

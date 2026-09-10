@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+from urllib.parse import urlparse
 import subprocess
 import sys
 from pathlib import Path
@@ -98,6 +100,11 @@ def check_supported_evidence(data: dict[str, Any]) -> list[str]:
         label = adapter.get("id", adapter.get("name", "<unknown>"))
         if not adapter.get("harness_version"):
             errors.append(f"{label}: conformance-supported requires harness_version")
+        evidence_url = urlparse(str(adapter.get("evidence_url", "")))
+        if evidence_url.scheme != "https" or not evidence_url.netloc or evidence_url.username or evidence_url.password:
+            errors.append(f"{label}: conformance-supported requires a public HTTPS evidence_url")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(adapter.get("evidence_sha256", ""))):
+            errors.append(f"{label}: conformance-supported requires evidence_sha256")
         capabilities = adapter.get("capabilities", {})
         required = {"instructions", "instructions.scoped", "skills", "mcp.stdio", "mcp.remote", "mcp.envRef", "hooks.command"}
         if set(capabilities) != required:
@@ -184,11 +191,21 @@ def check_cli_capabilities(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def check_release_support(data: dict[str, Any]) -> list[str]:
+    adapters = data.get("adapters", [])
+    vendors = [a.get("reference_cli_vendor") for a in adapters]
+    if sorted(v for v in vendors if isinstance(v, str)) != ["claude", "codex", "copilot"]:
+        return ["release requires exactly one row for each of claude, codex, and copilot"]
+    return [f"{a['reference_cli_vendor']}: release requires conformance-supported status"
+            for a in adapters if a.get("status") != "conformance-supported"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="rewrite generated compatibility documentation")
     parser.add_argument("--skip-workbench-pins", action="store_true",
                         help="skip the version-pin comparison when Workbench is not checked out")
+    parser.add_argument("--require-supported", action="store_true", help="require all three native adapters for release")
     args = parser.parse_args()
 
     data = load_compatibility()
@@ -204,6 +221,8 @@ def main() -> int:
     else:
         errors.extend(check_pinned_harness_versions(data))
     errors.extend(check_supported_evidence(data))
+    if args.require_supported:
+        errors.extend(check_release_support(data))
     errors.extend(check_cli_capabilities(data))
     if errors:
         for error in errors:

@@ -152,9 +152,10 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"skills": "cli-projection-only",
 		},
 		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "unsupported", "hooks.command": "projection-only"},
-		Evidence:         "Local native feature tests recorded with latest pinned copilot; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; environment-reference mappings remain refused",
+		Evidence:         "Refusal guards are implemented; local native runs and retries are recorded separately; full capability support is not established",
 		Limitations: []string{
-			"Native discovery exposes canonical skills when the skills profile is unselected",
+			"Unselected non-empty canonical skills are refused; direct harness use can still discover them",
+			"Native skill use has varied across runs; passing discovery alone does not establish support",
 			"Native evidence covers Linux fixtures, not other operating systems",
 			"Portable MCP environment references are refused because current documented project configuration exposes literal values",
 			"Hook matchers are limited to PreToolUse, PostToolUse, PermissionRequest, PreCompact, and SubagentStart",
@@ -172,13 +173,13 @@ var vendorCompatibility = map[string]compatibilitySummary{
 			"hooks":  "cli-projection-only",
 			"skills": "cli-projection-only",
 		},
-		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "transformed", "hooks.command": "projection-only"},
-		Evidence:         "Local native feature tests recorded with latest pinned codex; tools-profile removal and re-enabling pass; unselected skill exposure remains a known failure; missing stdio environment references also fail",
+		CapabilityStatus: map[string]string{"instructions": "projection-only", "instructions.scoped": "projection-only", "skills": "projection-only", "mcp.stdio": "projection-only", "mcp.remote": "projection-only", "mcp.envRef": "unsupported", "hooks.command": "projection-only"},
+		Evidence:         "Refusal guards are implemented; local native runs and retries are recorded separately; full capability support is not established",
 		Limitations: []string{
-			"Native discovery exposes canonical skills when the skills profile is unselected",
-			"Missing stdio environment references do not stop native server activation",
+			"Unselected non-empty canonical skills are refused; direct harness use can still discover them",
+			"Stdio environment references are refused because missing runtime sources do not prevent server activation",
 			"Native evidence covers Linux fixtures, not other operating systems",
-			"Stdio environment references must use the same source and target variable name",
+			"Remote header environment references remain projected; this does not establish the full mcp.envRef capability",
 			"Catalogue-scoped disableAllHooks is refused; remove the hooks profile to remove owned hooks",
 			"Hook matchers on UserPromptSubmit and Stop are refused",
 			"Command hook exit code 1 fails open; failure semantics remain native",
@@ -466,6 +467,17 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 		if err != nil {
 			return err
 		}
+	}
+	if diagnostics, err := requiredCapabilityDiagnostics(vendor, source); err != nil {
+		return err
+	} else if len(diagnostics) > 0 {
+		return errors.New(strings.Join(diagnostics, "; "))
+	}
+	if err := checkUnselectedSkills(vendor, output, profiles); err != nil {
+		return err
+	}
+	if diagnostics := referenceDiagnostics(vendor, servers); len(diagnostics) > 0 {
+		return errors.New(strings.Join(diagnostics, "; "))
 	}
 	var hooks hooksDocument
 	if profiles["hooks"] {
@@ -946,6 +958,21 @@ func writeVendorMCP(vendor, root string, servers map[string]MCPServer, force boo
 	if err != nil {
 		return err
 	}
+	if vendor == "claude" {
+		for name, server := range servers {
+			for key, value := range server.Env {
+				if isEnvironmentReference(value) {
+					server.Env[key] = "${" + environmentReferenceName(value) + "}"
+				}
+			}
+			for key, value := range server.Headers {
+				if isEnvironmentReference(value) {
+					server.Headers[key] = "${" + environmentReferenceName(value) + "}"
+				}
+			}
+			servers[name] = server
+		}
+	}
 	path := vendorMCPPath(vendor, root)
 	if vendor == "copilot" {
 		data, err := json.MarshalIndent(mcpDocument{Servers: vendorMCPServers(servers)}, "", "  ")
@@ -967,12 +994,22 @@ func writeVendorMCP(vendor, root string, servers map[string]MCPServer, force boo
 
 	codexServers := make(map[string]codexServer, len(servers))
 	for name, server := range servers {
+		envHeaders := map[string]string{}
+		literalHeaders := map[string]string{}
+		for header, value := range server.Headers {
+			if isEnvironmentReference(value) {
+				envHeaders[header] = environmentReferenceName(value)
+			} else {
+				literalHeaders[header] = value
+			}
+		}
 		codexServers[name] = codexServer{
 			Command:                  server.Command,
 			Args:                     server.Args,
 			Env:                      server.Env,
 			URL:                      server.URL,
-			HTTPHeaders:              server.Headers,
+			HTTPHeaders:              literalHeaders,
+			EnvHTTPHeaders:           envHeaders,
 			StartupTimeoutSec:        server.StartupTimeoutSec,
 			ToolTimeoutSec:           server.ToolTimeoutSec,
 			DefaultToolsApprovalMode: server.DefaultToolsApprovalMode,
