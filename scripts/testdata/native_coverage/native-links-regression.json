@@ -1,0 +1,285 @@
+{
+  "source_sha256": "f41f70b081e3920822c125f90a1c27b5bea920061f74510ed20dc49c419ed310",
+  "features": [
+    {
+      "id": "codex.794e3cf6b493ec7f2e89",
+      "vendor": "codex",
+      "context": "settings",
+      "native": "model_providers.amazon-bedrock.aws.profile",
+      "category": "native-configuration",
+      "scope": [
+        "project",
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=0.154.0",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation.",
+        "Project scope: Codex 0.154.0 ignores project model_providers; use native user scope where the setting has a supported mapping. Required profiles refuse before writes; optional source content remains preserved and inactive. The native fixture verifies effective configuration and routes the model request to the user provider. Credential-broker-dependent fields and user-scope behavior for other settings need separate checks."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-181",
+          "source": "codex-config",
+          "native_name": "model_providers.amazon-bedrock.aws.profile",
+          "url": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+          "line": 1080,
+          "section": "config.toml"
+        }
+      ],
+      "scope_dispositions": {
+        "project": "native-ignored"
+      },
+      "scope_evidence": {
+        "project": [
+          "WORKBENCH/evidence/native-draft2-debug/codex-project-provider-verified.json",
+          "WORKBENCH/evidence/native-draft2-debug/codex-project-allkeys-verified.json",
+          "WORKBENCH/evidence/native-draft2-debug/codex-provider-scope.sources.json"
+        ]
+      },
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "codex.b791ff12132b9dfad4c2",
+      "vendor": "codex",
+      "context": "settings",
+      "native": "model_providers.amazon-bedrock.aws.region",
+      "category": "native-configuration",
+      "scope": [
+        "project",
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=0.154.0",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation.",
+        "Project scope: Codex 0.154.0 ignores project model_providers; use native user scope where the setting has a supported mapping. Required profiles refuse before writes; optional source content remains preserved and inactive. The native fixture verifies effective configuration and routes the model request to the user provider. Credential-broker-dependent fields and user-scope behavior for other settings need separate checks."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-182",
+          "source": "codex-config",
+          "native_name": "model_providers.amazon-bedrock.aws.region",
+          "url": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+          "line": 1086,
+          "section": "config.toml"
+        }
+      ],
+      "scope_dispositions": {
+        "project": "native-ignored"
+      },
+      "scope_evidence": {
+        "project": [
+          "WORKBENCH/evidence/native-draft2-debug/codex-project-provider-verified.json",
+          "WORKBENCH/evidence/native-draft2-debug/codex-project-allkeys-verified.json",
+          "WORKBENCH/evidence/native-draft2-debug/codex-provider-scope.sources.json"
+        ]
+      },
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.0838af5f0d0d78e7d89c",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "agents/",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1235",
+          "source": "copilot-config",
+          "native_name": "`agents/`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 15,
+          "section": "Directory overview"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.24118dc82d6e21b4c204",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "copilot-instructions.md",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1237",
+          "source": "copilot-config",
+          "native_name": "`copilot-instructions.md`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 17,
+          "section": "Directory overview"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.516a9e85df555b7007c4",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "lsp-config.json",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1244",
+          "source": "copilot-config",
+          "native_name": "`lsp-config.json`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 24,
+          "section": "Directory overview"
+        },
+        {
+          "entry_id": "source-entry-1285",
+          "source": "copilot-config",
+          "native_name": "`lsp-config.json`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 388,
+          "section": "What you can safely delete"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.58898df466f23336f668",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "skills/",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1254",
+          "source": "copilot-config",
+          "native_name": "`skills/`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 34,
+          "section": "Directory overview"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.700cc9e05abaa46bb67a",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "hooks/",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1239",
+          "source": "copilot-config",
+          "native_name": "`hooks/`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 19,
+          "section": "Directory overview"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    },
+    {
+      "id": "copilot.dae07c6b1bc49d77f160",
+      "vendor": "copilot",
+      "context": "artifact",
+      "native": "mcp-config.json",
+      "category": "native-configuration",
+      "scope": [
+        "user"
+      ],
+      "adapter": null,
+      "version_constraint": "=1.0.83",
+      "disposition": "mapping-pending",
+      "native_status": "unverified",
+      "limitations": [
+        "Artifact or setting mapping remains incomplete; this is implementation work, not a native limitation."
+      ],
+      "evidence": [
+        {
+          "entry_id": "source-entry-1245",
+          "source": "copilot-config",
+          "native_name": "`mcp-config.json`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 25,
+          "section": "Directory overview"
+        },
+        {
+          "entry_id": "source-entry-1286",
+          "source": "copilot-config",
+          "native_name": "`mcp-config.json`",
+          "url": "https://docs.github.com/api/article/body?pathname=/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference",
+          "line": 389,
+          "section": "What you can safely delete"
+        }
+      ],
+      "record_kind": "feature",
+      "counted_feature": true,
+      "milestone_scope": "linux-cli"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ func nativeTargetForPath(vendor, scope, base, path string) (*nativeTarget, bool)
 	if err != nil || !safeNativeRelative(rel) {
 		return nil, false
 	}
-	for _, kind := range []string{"skill", "scoped-instructions", "hooks", "agent"} {
+	for _, kind := range []string{"skill", "scoped-instructions", "hooks", "agent", "agent-instructions"} {
 		parts := strings.Split(rel, string(filepath.Separator))
 		for i := range parts {
 			artifacts = append(artifacts, nativeArtifact{Kind: kind, Name: filepath.Join(parts[i:]...)})

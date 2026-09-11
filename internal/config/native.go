@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -187,11 +188,22 @@ func readScopedNativeProfiles(root, directory string) ([]nativeProfile, error) {
 		if p.Namespace != entry.Name() || !regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`).MatchString(p.Namespace) || p.HarnessVersion == "" || (p.Scope != "project" && p.Scope != "user") || raw["required"] == nil || p.Artifacts == nil {
 			return nil, fmt.Errorf("invalid native profile: %s", path)
 		}
-		for _, a := range p.Artifacts {
+		p.directory = directory
+		var artifactFields []map[string]json.RawMessage
+		if err := json.Unmarshal(raw["artifacts"], &artifactFields); err != nil {
+			return nil, err
+		}
+		for i, a := range p.Artifacts {
+			if artifactFields[i]["name"] != nil && a.Name == "" {
+				return nil, fmt.Errorf("native artifact name must not be empty")
+			}
 			if a.Kind == "" || !safeNativeRelative(a.Source) || (a.Name != "" && !safeNativeRelative(a.Name)) {
 				return nil, fmt.Errorf("invalid native artifact in %s", path)
 			}
-			src := filepath.Join(base, p.Namespace, a.Source)
+			src, err := nativeArtifactSource(root, p, a)
+			if err != nil {
+				return nil, err
+			}
 			if err := nativeNoSymlinks(src); err != nil {
 				return nil, err
 			}
@@ -247,6 +259,16 @@ func nativeTargetPath(vendor, scope, base string, a nativeArtifact) (string, str
 					relative = ".github/copilot-instructions.md"
 				}
 			}
+		case "agent-instructions":
+			if vendor != "copilot" || scope != "project" || !nativeCopilotAgentInstructionName(name) {
+				return "", "", fmt.Errorf("agent instructions require a registered Copilot project path")
+			}
+			relative = name
+		case "canonical-instructions":
+			if vendor != "copilot" || scope != "project" || a.Source != "AGENTS.md" || name != "" {
+				return "", "", fmt.Errorf("canonical instructions require the fixed Copilot project core binding")
+			}
+			relative = "AGENTS.md"
 		case "agent":
 			if !safeNativeRelative(name) || strings.Contains(name, "/") {
 				return "", "", fmt.Errorf("agent requires a file name")
@@ -277,7 +299,7 @@ func nativeTargetPath(vendor, scope, base string, a nativeArtifact) (string, str
 				return "", "", fmt.Errorf("use the portable skills profile for project skills")
 			}
 		case "scoped-instructions":
-			if vendor != "copilot" || !safeNativeRelative(name) || strings.Contains(name, "/") || !strings.HasSuffix(name, ".instructions.md") {
+			if vendor != "copilot" || !safeNativeRelative(name) || !strings.HasSuffix(name, ".instructions.md") {
 				return "", "", fmt.Errorf("invalid scoped instruction artifact")
 			}
 			relative = filepath.Join("instructions", name)
@@ -598,7 +620,16 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		return b, err
 	}
 	b.plan = PlanResult{SchemaVersion: NativeVersion, Vendor: vendor, Root: filepath.Dir(root), Actions: []Action{}, Native: &NativePlan{StandardVersion: NativeVersion, Platforms: []string{"linux"}, Scope: scope, NativeHome: home, Versions: []string{nativePinnedVersion(vendor)}, Features: []NativeFeature{}, RequiredActions: []string{"Use the pinned native CLI version.", "Reload native configuration. Login, plugin installation, scheduling, and execution are separate native operations."}}}
+	if vendor == "copilot" && nativeHasProfile(m.Profiles, "skills") {
+		if err = nativePlanCopilotSkills(&b.plan, root, base, scope); err != nil {
+			return b, err
+		}
+		if len(b.plan.Diagnostics) > 0 {
+			return b, nil
+		}
+	}
 	targets := map[string]*nativeTarget{}
+	canonicalBinding := false
 	agentNames := map[string]string{}
 	agentStems := map[string]string{}
 	agentTargets := map[string]string{}
@@ -660,13 +691,19 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 				return b, fmt.Errorf("native version constraint %s is not supported", p.HarnessVersion)
 			}
 			for _, a := range p.Artifacts {
-				src := filepath.Join(root, p.directory, p.Namespace, a.Source)
+				src, sourceErr := nativeArtifactSource(root, p, a)
+				if sourceErr != nil {
+					return b, sourceErr
+				}
 				path, format, e := nativeTargetPath(vendor, scope, base, a)
 				feature := NativeFeature{Feature: a.Kind, Source: src, Destination: path, Scope: scope, Ownership: "requested by source repository", Authority: "registry target", Activation: "inactive"}
 				if p.directory == "plugins" && a.Kind != "config" {
 					e = fmt.Errorf("plugin selection profiles only project configuration")
 				}
 				if e != nil || !versionOK {
+					if scope == "project" && p.directory == "native" && a.Kind == "canonical-instructions" {
+						return b, fmt.Errorf("cannot choose a portable instruction target from an unmapped canonical binding")
+					}
 					feature.Disposition = "inactive"
 					feature.Limitation = "unknown artifact or unsupported native version"
 					b.plan.Native.Features = append(b.plan.Native.Features, feature)
@@ -675,15 +712,44 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 					}
 					continue
 				}
+				if a.Kind == "canonical-instructions" {
+					if canonicalBinding {
+						return b, fmt.Errorf("duplicate canonical instruction binding")
+					}
+					canonicalBinding = true
+					feature = nativeCanonicalInstructionFeature(feature)
+					feature.Activation = "portable core projected at the registered root path"
+					b.plan.Native.Features = append(b.plan.Native.Features, feature)
+					b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, nativeAgentInstructionReferenceAction)
+					continue
+				}
 				data, e := nativeReadFile(src)
 				if e != nil {
 					return b, e
 				}
 				if format == "" {
+					if vendor == "copilot" && scope == "user" && a.Kind == "instructions" {
+						feature = nativeCopilotUserInstructionFeature(feature)
+						b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, nativeUserInstructionReferenceAction)
+					}
+					if a.Kind == "agent-instructions" {
+						if !utf8.Valid(data) {
+							return b, fmt.Errorf("native agent instructions must be UTF-8 Markdown")
+						}
+						feature = nativeAgentInstructionFeature(feature)
+						b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, nativeAgentInstructionReferenceAction)
+					}
+					if a.Kind == "scoped-instructions" {
+						feature = nativeCopilotRecursiveInstructionFeature(feature)
+						if scope == "user" {
+							b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, nativeCopilotInstructionReadAction)
+						}
+					}
 					if a.Kind == "agent" {
 						name := ""
 						if vendor == "codex" {
 							name, e = nativeCodexAgent(data, scope)
+							feature = nativeCodexRoleFeature(feature)
 						} else {
 							name, e = nativeCopilotAgent(data, path)
 							feature = nativeCopilotAgentFeature(feature)
@@ -721,6 +787,12 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 				values, e := parseNative(data, format)
 				if e != nil {
 					return b, fmt.Errorf("%s: %w", src, e)
+				}
+				if a.Kind == "mcp" && vendor == "copilot" {
+					values = nativeCopilotMCPValues(values)
+				}
+				if e = nativeCheckRuntimeAuthentication(vendor, values); e != nil {
+					return b, e
 				}
 				if a.Kind == "mcp" && vendor == "copilot" {
 					feature = nativeCopilotMCPFeature(feature)
@@ -795,6 +867,19 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 					if p.Required && len(inactive) != 0 {
 						return b, fmt.Errorf("required native field %s cannot activate: %s", inactive[0].Path, inactive[0].Reason)
 					}
+					if vendor == "codex" && scope == "user" {
+						providers, _ := values["model_providers"].(map[string]any)
+						for _, name := range nativeSortedKeys(providers) {
+							provider, _ := providers[name].(map[string]any)
+							if provider["auth"] != nil {
+								authFeature := feature
+								authFeature.Feature = "artifact:config:/model_providers/" + nativePointer(name) + "/auth"
+								authFeature.Disposition, authFeature.Activation = "configuration", "pending native reload"
+								b.plan.Native.Features = append(b.plan.Native.Features, nativeCodexCommandAuthFeature(authFeature))
+								b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, "Install and check the provider token command separately. Codex token-command failures can send unauthenticated model requests; apply does not execute the command or grant native authority.")
+							}
+						}
+					}
 				}
 				keys := make([]string, 0, len(values))
 				for key := range values {
@@ -847,6 +932,23 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 							}
 						}
 						f.Activation = "pending native reload"
+						if vendor == "codex" && a.Kind == "config" && key == "agents" {
+							roles, _ := values[key].(map[string]any)
+							hasReference := false
+							for _, name := range nativeSortedKeys(roles) {
+								role, _ := roles[name].(map[string]any)
+								if _, ok := role["config_file"].(string); !ok {
+									continue
+								}
+								reference := f
+								hasReference = true
+								reference.Feature = "artifact:role-reference:/agents/" + nativePointer(name) + "/config_file"
+								b.plan.Native.Features = append(b.plan.Native.Features, nativeCodexRoleReferenceFeature(reference))
+							}
+							if hasReference {
+								b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, "Keep external agent config_file references and skill selectors available at their resolved paths. Apply owns only selected native assets; it does not copy external role or skill libraries. Reload Codex to check discovery.")
+							}
+						}
 						if vendor == "codex" && a.Kind == "config" && key == "skills" {
 							if preferences, ok := values[key].(map[string]any); ok && preferences["config"] != nil {
 								f = nativeCodexSkillFeature(f)
@@ -891,8 +993,63 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		if e != nil {
 			return b, e
 		}
-		if e = add(path, format, "", data, src, true); e != nil {
-			return b, e
+		if canonicalBinding {
+			path, format, e = nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: "canonical-instructions", Source: "AGENTS.md"})
+			if e != nil {
+				return b, e
+			}
+		}
+		link := filepath.Join(base, "AGENTS.md")
+		info, statErr := os.Lstat(link)
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			return b, statErr
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			if e = validateInstructionFile(link, src); e != nil {
+				return b, e
+			}
+			if targets[link] != nil || !canonicalBinding && targets[path] != nil {
+				return b, fmt.Errorf("duplicate native assignment for %s", path)
+			}
+			if path == link {
+				key := nativeKey(path, "")
+				if owner, owned := state.Settings[key]; owned && owner.Source != root {
+					return b, fmt.Errorf("instruction path is owned by another source repository")
+				}
+				// A verified canonical link is not a managed native asset. If a
+				// copied instruction file was converted to this link, relinquish
+				// that file ownership without deleting or following the link.
+				delete(state.Settings, key)
+			}
+			b.plan.Native.Features = append(b.plan.Native.Features, NativeFeature{Feature: "instructions:canonical-link", Source: src,
+				Destination: link, Scope: scope, Disposition: "portable-mapping", Activation: "existing canonical compatibility link",
+				Ownership: "not owned by native projection", Authority: "verified link to this project's canonical instructions"})
+		} else {
+			rootOwner, rootOwned := state.Settings[nativeKey(link, "")]
+			if vendor == "copilot" && path != link && statErr == nil && targets[link] == nil && rootOwned && rootOwner.Source == root && bytes.Contains(data, []byte("@")) {
+				rootData, err := nativeReadFile(link)
+				if err != nil {
+					return b, err
+				}
+				if bytes.Equal(rootData, data) {
+					return b, fmt.Errorf("moving owned root instructions would change a native reference base; retain the canonical binding or update the references")
+				}
+			}
+			if vendor == "copilot" && path != link && statErr == nil && targets[link] == nil && !(rootOwned && rootOwner.Source == root) {
+				rootData, err := nativeReadFile(link)
+				if err != nil {
+					return b, err
+				}
+				if !bytes.Equal(rootData, data) {
+					return b, fmt.Errorf("native projection refuses distinct project instructions in root AGENTS.md and canonical AGENTS.md")
+				}
+				if bytes.Contains(rootData, []byte("@")) {
+					return b, fmt.Errorf("Copilot root AGENTS.md contains a potential file reference; projection cannot preserve its reference base at .github/copilot-instructions.md")
+				}
+			}
+			if e = add(path, format, "", data, src, true); e != nil {
+				return b, e
+			}
 		}
 	}
 
@@ -1313,6 +1470,14 @@ func nativePlanBackups(b *nativeBuild) error {
 		}
 		old := snapshot.data
 		backup := c.path + ".bak"
+		// A root-level marker backup is not a skill package. Keep it out of
+		// selected skills while retaining the ordinary private backup and
+		// rollback rules. Only the canonical empty-marker removal uses this.
+		skillsDir := filepath.Dir(c.path)
+		canonical := filepath.Dir(skillsDir)
+		if c.remove && len(old) == 0 && filepath.Base(c.path) == ".gitkeep" && filepath.Base(skillsDir) == "skills" && filepath.Base(canonical) == ".agents" {
+			backup = filepath.Join(canonical, "state/import-backups/skills.gitkeep.bak")
+		}
 		if err = nativeNoSymlinks(backup); err != nil {
 			return err
 		}
@@ -1357,7 +1522,8 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 	if err = nativeNoSymlinks(root); err != nil {
 		return err
 	}
-	if _, err = nativeImportExisting(root); err != nil {
+	sharedProjectSkills := vendor == "copilot" && (options.Scope == "" || options.Scope == "project")
+	if _, err = nativeImportExisting(root, sharedProjectSkills); err != nil {
 		return err
 	}
 
@@ -1373,7 +1539,7 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 		return err
 	}
 	defer lock.release()
-	existing, err := nativeImportExisting(root)
+	existing, err := nativeImportExisting(root, sharedProjectSkills)
 	if err != nil {
 		return err
 	}
@@ -1388,10 +1554,62 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 	p := nativeProfile{Namespace: ns, HarnessVersion: "=" + nativePinnedVersion(vendor), Scope: scope, Required: false, Artifacts: []nativeArtifact{}}
 	var changes []nativeChange
 	excluded := []string{}
+	var importedProjectSkills []string
 	foundSource := false
 	profiles := []string{"native"}
 	instructions := []byte("Use the selected native profile.\n")
 	instructionsProvided := false
+	var rootInstructions []byte
+	rootRegular := false
+	agentInstructionSources := map[string]string{}
+	bindings := nativeInstructionBindings{}
+	if vendor == "copilot" && scope == "project" {
+		bindings, err = nativeExistingInstructionBindings(root)
+		if err != nil {
+			return err
+		}
+		agentInstructionSources, err = nativeExistingAgentInstructionSources(root)
+		if err != nil {
+			return err
+		}
+	}
+	canonicalLink := ""
+	if scope == "project" {
+		link := filepath.Join(base, "AGENTS.md")
+		info, statErr := os.Lstat(link)
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			return statErr
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			source := filepath.Join(root, "AGENTS.md")
+			if err := validateInstructionFile(link, source); err != nil {
+				return err
+			}
+			// Read the verified canonical file directly. Do not make native
+			// file reads follow symlinks or create a second instruction asset.
+			instructions, err = nativeReadFile(source)
+			if err != nil {
+				return err
+			}
+			canonicalLink = link
+			instructionsProvided, foundSource = true, true
+			if vendor == "copilot" {
+				bindings.Core = true
+			}
+		} else if statErr == nil && vendor == "copilot" {
+			rootInstructions, err = nativeReadFile(link)
+			if err != nil {
+				return err
+			}
+			rootRegular, foundSource = true, true
+			if bindings.Core {
+				instructions, instructionsProvided = rootInstructions, true
+			}
+		}
+	}
+	if vendor == "copilot" && scope == "project" && bindings.Core {
+		p.Artifacts = append(p.Artifacts, nativeArtifact{Kind: "canonical-instructions", Source: "AGENTS.md"})
+	}
 	kinds := []string{"config", "instructions"}
 	if vendor == "copilot" {
 		kinds = append(kinds, "mcp", "lsp")
@@ -1402,6 +1620,9 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 		path, format, e := nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: kind})
 		if e != nil {
 			return e
+		}
+		if kind == "instructions" && path == canonicalLink {
+			continue
 		}
 		if e = nativeNoSymlinks(path); e != nil {
 			return e
@@ -1445,12 +1666,16 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 					return err
 				}
 			}
+			if err := nativeCheckRuntimeAuthentication(vendor, values); err != nil {
+				return err
+			}
 			filtered, paths := nativeImportFilter(vendor, values, nil)
 			values = filtered
 			excluded = append(excluded, paths...)
 			rebasedSkills := vendor == "codex" && kind == "config" && scope == "user" && nativeRebaseCodexSkillImport(values, base)
 			rebasedTLS := vendor == "codex" && kind == "config" && scope == "user" && nativeRebaseCodexOtelImport(values, base)
-			if len(paths) > 0 || rebasedSkills || rebasedTLS {
+			rebasedRoles := vendor == "codex" && kind == "config" && nativeRebaseCodexRoleImport(values, filepath.Dir(path), scope)
+			if len(paths) > 0 || rebasedSkills || rebasedTLS || rebasedRoles {
 				data, e = nativeEncode(values, format)
 				if e != nil {
 					return e
@@ -1534,13 +1759,59 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 			}
 		}
 		if kind == "instructions" && scope == "project" {
+			if vendor == "copilot" && bindings.Core {
+				p.Artifacts = append(p.Artifacts, bindings.Native)
+				changes = append(changes, nativeChange{path: filepath.Join(root, "native", ns, bindings.Native.Source), data: data, mode: 0600})
+				continue
+			}
+			if instructionsProvided && !bytes.Equal(instructions, data) {
+				return fmt.Errorf("native import refuses distinct project instructions in AGENTS.md and %s", path)
+			}
 			instructions = data
 			instructionsProvided = true
 			continue
 		}
 		source := filepath.Base(path)
-		p.Artifacts = append(p.Artifacts, nativeArtifact{Kind: kind, Source: source})
+		artifact := nativeArtifact{Kind: kind, Source: source}
+		if scope == "user" && kind == "instructions" {
+			artifact, err = nativeExistingUserInstructionArtifact(root, ns, artifact)
+			if err != nil {
+				return err
+			}
+			source = artifact.Source
+		}
+		p.Artifacts = append(p.Artifacts, artifact)
 		changes = append(changes, nativeChange{path: filepath.Join(root, "native", ns, source), data: data, mode: 0600})
+	}
+	if vendor == "copilot" && scope == "project" {
+		if rootRegular && !bindings.Core {
+			if agentInstructionSources["AGENTS.md"] != "" || bytes.Contains(rootInstructions, []byte("@")) || instructionsProvided && !bytes.Equal(instructions, rootInstructions) {
+				change, artifact, err := nativeImportAgentInstruction(root, "AGENTS.md", agentInstructionSources["AGENTS.md"], rootInstructions)
+				if err != nil {
+					return err
+				}
+				changes = append(changes, change)
+				p.Artifacts = append(p.Artifacts, artifact)
+			} else {
+				instructions, instructionsProvided = rootInstructions, true
+			}
+		}
+		for _, name := range []string{"CLAUDE.md", ".claude/CLAUDE.md", "GEMINI.md"} {
+			data, err := nativeReadFile(filepath.Join(base, name))
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			change, artifact, err := nativeImportAgentInstruction(root, name, agentInstructionSources[name], data)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, change)
+			p.Artifacts = append(p.Artifacts, artifact)
+			foundSource = true
+		}
 	}
 	artifactChanges, artifacts, artifactExclusions, err := nativeImportArtifactFiles(vendor, scope, base, root, ns)
 	if err != nil {
@@ -1561,14 +1832,45 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 			profiles = append(profiles, "skills")
 			foundSource = true
 		}
+	} else if vendor == "copilot" {
+		assets, sources, e := nativeImportCopilotProjectSkills(base, root)
+		if e != nil {
+			return e
+		}
+		if len(sources) > 0 {
+			changes = append(changes, assets...)
+			profiles = append(profiles, "skills")
+			foundSource = true
+			importedProjectSkills = sources
+		}
 	}
 	if !foundSource {
 		return fmt.Errorf("no recognized native configuration artifacts")
 	}
 	changes = append(changes, nativeChange{path: filepath.Join(root, "AGENTS.md"), data: instructions, mode: 0600})
-	if len(excluded) > 0 {
+	if len(excluded) > 0 || len(importedProjectSkills) > 0 {
 		sort.Strings(excluded)
-		report, _ := json.MarshalIndent(map[string]any{"external_fields": excluded, "disposition": "not imported; source remains unchanged"}, "", "  ")
+		details := map[string]any{"external_fields": excluded, "disposition": "not imported; source remains unchanged"}
+		if len(importedProjectSkills) > 0 {
+			imports := map[string]string{}
+			for _, source := range importedProjectSkills {
+				imports[source] = "skills/" + filepath.Base(source)
+			}
+			details["imported_project_skills"] = imports
+		}
+		var disabled []string
+		if vendor == "codex" {
+			for _, path := range excluded {
+				if path == "otel.exporter" || path == "otel.trace_exporter" || path == "otel.metrics_exporter" {
+					disabled = append(disabled, path)
+				}
+			}
+		}
+		if len(disabled) > 0 {
+			details["disabled_exporters"] = disabled
+			details["disabled_exporter_reason"] = "explicit none prevents unauthenticated telemetry and native default exporters after credential exclusion"
+		}
+		report, _ := json.MarshalIndent(details, "", "  ")
 		changes = append(changes, nativeChange{path: filepath.Join(root, "native", ns, "import-report.json"), data: append(report, '\n'), mode: 0600})
 	}
 	profileData, _ := json.MarshalIndent(p, "", "  ")
@@ -1656,6 +1958,7 @@ func nativeUniqueJSON(data []byte) error {
 func nativeCapabilities(vendor string) *NativePlan {
 	p := &NativePlan{StandardVersion: NativeVersion, Platforms: []string{"linux"}, Scope: "project|user", Versions: []string{nativePinnedVersion(vendor)}, Features: []NativeFeature{}, RequiredActions: []string{"Use --experimental and a draft.2 manifest.", "User scope requires an absolute --native-home.", "Native discovery and execution are not verified by configuration writes."}}
 	p.SettingRegistry = nativeSettingDeclarations(vendor)
+	p.RequiredActions = append(p.RequiredActions, "Keep runtime credentials in native external stores or supported environment references. Import and projection refuse MCP, provider, or LSP definitions when filtering would remove authentication, including optional profiles and forced writes.")
 	for _, scope := range []string{"project", "user"} {
 		keys := []string{}
 		for key := range nativeSettingRegistry[vendor][scope] {
@@ -1685,12 +1988,62 @@ func nativeCapabilities(vendor string) *NativePlan {
 		pluginTarget, _, _ := nativeTargetPath(vendor, scope, "<scope-root>", nativeArtifact{Kind: "config"})
 		p.Features = append(p.Features, nativePluginCapabilities(vendor, scope, pluginTarget)...)
 		if vendor == "codex" {
+			p.Features = append(p.Features, nativeCodexRoleReferenceFeature(NativeFeature{Feature: "artifact:role-reference:/agents/<name>/config_file", Source: "native_codex_role_references.go", Destination: pluginTarget, Scope: scope, Disposition: "artifact-field-mapping", Activation: "requires referenced files and native reload", Ownership: "setting; referenced external files are not owned", Authority: "native discovery; no external file or authority writes"}))
+			if scope == "project" {
+				p.Features = append(p.Features, nativeCodexProjectScopeCapabilities(pluginTarget)...)
+			}
 			p.Features = append(p.Features, nativeCodexSkillCapabilities(scope, pluginTarget)...)
 			p.Features = append(p.Features, nativeCodexOtelCapabilities(scope, pluginTarget)...)
+			if scope == "user" {
+				p.Features = append(p.Features, nativeCodexCommandAuthFeature(NativeFeature{Feature: "artifact:config:/model_providers/<name>/auth", Source: "native_auth_units.go", Destination: pluginTarget, Scope: scope, Disposition: "value-mapping", Activation: "requires complete token-command validation and native reload", Ownership: "setting", Authority: "native token command and returned credentials remain external"}))
+			}
 		}
 		if vendor == "copilot" {
 			p.Features = append(p.Features, nativeCopilotPreferenceCapabilities(scope, pluginTarget)...)
 			p.Features = append(p.Features, nativeCopilotSubagentCapabilities(scope, pluginTarget)...)
+			if scope == "user" {
+				feature := nativeCopilotUserInstructionFeature(NativeFeature{
+					Feature: "artifact:instructions", Source: "native profile artifact", Destination: "<native-home>/copilot-instructions.md", Scope: scope,
+					Activation: "import then project; start a new native session", Ownership: "file", Authority: "explicit native home; no trust or account writes",
+				})
+				p.Features = append(p.Features, feature)
+				feature.Feature = "artifact:instruction-discovery:/$HOME/.copilot/copilot-instructions.md"
+				p.Features = append(p.Features, feature)
+			}
+			skillDestination := ".agents/skills/<name>/SKILL.md"
+			if scope == "user" {
+				skillDestination = "<native-home>/skills/<name>/SKILL.md"
+			}
+			p.Features = append(p.Features, nativeCopilotSkillCapabilities(scope, skillDestination)...)
+			p.Features = append(p.Features, nativeCopilotInstructionDiscoveryCapability(scope))
+			if scope == "project" {
+				p.Features = append(p.Features, nativeCopilotProjectSkillImportCapabilities()...)
+				p.Features = append(p.Features, nativeCanonicalInstructionFeature(NativeFeature{
+					Feature: "artifact:canonical-instructions", Source: ".agents/AGENTS.md", Destination: "<project-root>/AGENTS.md",
+					Scope: scope, Activation: "fixed core binding; start a new native session", Ownership: "file, except existing verified canonical link",
+					Authority: "fixed canonical source and registered project root target",
+				}))
+				for _, name := range []string{"AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", "GEMINI.md"} {
+					feature := nativeAgentInstructionFeature(NativeFeature{
+						Feature: "artifact:agent-instructions:/" + name, Source: name,
+						Destination: "<project-root>/" + name, Scope: scope,
+						Activation: "import then project; start a new native session", Ownership: "file", Authority: "fixed registry project path",
+					})
+					p.Features = append(p.Features, feature)
+					if name != "AGENTS.md" {
+						feature.Feature = "artifact:instruction-discovery:/" + name
+						p.Features = append(p.Features, feature)
+					}
+				}
+				p.Features = append(p.Features, NativeFeature{
+					Feature: "artifact:instruction-discovery:/AGENTS.md", Source: "AGENTS.md", Destination: ".agents/AGENTS.md",
+					Scope: scope, Disposition: "portable-mapping", NativeStatus: "bounded-root-instruction-loading",
+					Activation: "import then project; start a new native session", Ownership: "canonical file; source remains unchanged",
+					Authority:  "supplied project root only",
+					Evidence:   []string{"docs/COPILOT_ROOT_INSTRUCTIONS.md", "WORKBENCH/conformance/verify_copilot_root_instructions.py", "docs/COPILOT_CANONICAL_INSTRUCTIONS.md", "WORKBENCH/conformance/verify_copilot_canonical_instructions.py"},
+					Limitation: "Imports plain root AGENTS.md into the portable core. Native agent-instructions artifacts preserve root @ references and distinct root and Copilot instruction bodies at their original paths. Projection refuses stale regular root instructions that differ from the canonical body. Projection uses .github/copilot-instructions.md unless a fixed canonical-instructions binding or verified canonical compatibility link selects the root path. Referenced project files remain external. Nested discovery and live reload are not covered.",
+				})
+			}
 		}
 		for _, artifact := range []nativeArtifact{{Kind: "mcp"}, {Kind: "lsp"}, {Kind: "agent", Name: "<name>.toml"}, {Kind: "scoped-instructions", Name: "<name>.instructions.md"}, {Kind: "hooks", Name: "<name>.json"}} {
 			// Resolve a safe sample through the same target registry used by apply.
@@ -1738,6 +2091,7 @@ func nativeCapabilities(vendor string) *NativePlan {
 			}
 			if artifact.Kind == "scoped-instructions" {
 				feature.Disposition, feature.Activation = "artifact-mapping", "pending native reload"
+				feature = nativeCopilotRecursiveInstructionFeature(feature)
 			}
 			if vendor == "copilot" && artifact.Kind == "agent" {
 				feature = nativeCopilotAgentFeature(feature)
@@ -1745,12 +2099,7 @@ func nativeCapabilities(vendor string) *NativePlan {
 			}
 			if vendor == "codex" && artifact.Kind == "agent" {
 				feature.Disposition, feature.Activation = "artifact-mapping", "requires field validation and native reload"
-				feature.NativeStatus = "bounded-fixture-execution"
-				feature.Limitation = "Native 0.154.0 fixture verifies discovery, instructions, model and reasoning selection, delegation, and a child command. Other settings and portable-security combinations need separate evidence."
-				feature.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/codex-projected-agent-execution-v2.json"}
-				if scope == "project" {
-					feature.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/codex-projected-project-agent-execution.json"}
-				}
+				feature = nativeCodexRoleFeature(feature)
 			}
 			p.Features = append(p.Features, feature)
 		}
@@ -1898,6 +2247,13 @@ func nativeImportFilter(vendor string, values map[string]any, prefix []string) (
 	var excluded []string
 	for key, value := range values {
 		path := append(append([]string(nil), prefix...), key)
+		if vendor == "codex" {
+			if disposition, _ := nativeCodexOtelExporterProblem(path, value); disposition == "external" {
+				out[key] = "none"
+				excluded = append(excluded, strings.Join(path, "."))
+				continue
+			}
+		}
 		if nativeFieldExcluded(vendor, path, value) {
 			excluded = append(excluded, strings.Join(path, "."))
 			continue

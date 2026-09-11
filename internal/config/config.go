@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -365,30 +366,7 @@ func validateWithOptions(root string, experimental bool) error {
 	if err := requireRegularFile(filepath.Join(root, "AGENTS.md"), "canonical instructions"); err != nil {
 		return err
 	}
-	repositoryRoot := filepath.Dir(root)
-	if err := filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".state" || path == root) {
-			return filepath.SkipDir
-		}
-		if entry.IsDir() && path != repositoryRoot {
-			if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
-				return filepath.SkipDir
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
-		if entry.Name() != "AGENTS.md" {
-			return nil
-		}
-		canonical := filepath.Join(filepath.Dir(path), ".agents", "AGENTS.md")
-		if path == filepath.Join(repositoryRoot, "AGENTS.md") {
-			canonical = filepath.Join(root, "AGENTS.md")
-		}
-		return validateInstructionFile(path, canonical)
-	}); err != nil {
+	if err := validateInstructionDiscovery(root); err != nil {
 		return err
 	}
 	if selected["tools"] {
@@ -673,10 +651,19 @@ func writeCanonicalMCP(root string, servers map[string]MCPServer, force bool) er
 }
 
 func readVendorMCP(vendor, root string) (map[string]MCPServer, error) {
+	return readVendorMCPWithPolicy(vendor, root, false)
+}
+
+func readVendorMCPWithPolicy(vendor, root string, canonicalOnly bool) (map[string]MCPServer, error) {
 	path := vendorMCPPath(vendor, root)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s MCP configuration %q: %w", vendor, path, err)
+	}
+	if canonicalOnly {
+		if err := validateStableMCPFields(vendor, data); err != nil {
+			return nil, err
+		}
 	}
 
 	if vendor == "copilot" {
@@ -703,6 +690,9 @@ func readVendorMCP(vendor, root string) (map[string]MCPServer, error) {
 	}
 	servers := make(map[string]MCPServer, len(document.Servers))
 	for name, server := range document.Servers {
+		if canonicalOnly && (len(server.Env) > 0 || len(server.HTTPHeaders) > 0) {
+			return nil, fmt.Errorf("ODA-IMPORT-0003: Codex MCP server %q contains literal environment or header values", name)
+		}
 		canonical := MCPServer{
 			Command: server.Command,
 			Args:    server.Args,
@@ -716,14 +706,24 @@ func readVendorMCP(vendor, root string) (map[string]MCPServer, error) {
 			DefaultToolsApprovalMode: server.DefaultToolsApprovalMode,
 		}
 		if len(server.EnvVars) > 0 {
-			canonical.Env = map[string]string{}
+			if canonical.Env == nil {
+				canonical.Env = map[string]string{}
+			}
 			for _, variable := range server.EnvVars {
+				if _, exists := canonical.Env[variable]; exists {
+					return nil, fmt.Errorf("Codex MCP server %q has duplicate environment assignments", name)
+				}
 				canonical.Env[variable] = "urn:open-dot-agents:env:" + variable
 			}
 		}
 		if len(server.EnvHTTPHeaders) > 0 {
-			canonical.Headers = map[string]string{}
+			if canonical.Headers == nil {
+				canonical.Headers = map[string]string{}
+			}
 			for header, variable := range server.EnvHTTPHeaders {
+				if _, exists := canonical.Headers[header]; exists {
+					return nil, fmt.Errorf("Codex MCP server %q has duplicate HTTP header assignments", name)
+				}
 				canonical.Headers[header] = "urn:open-dot-agents:env:" + variable
 			}
 		}
@@ -2333,6 +2333,13 @@ func validateSkills(path string) error {
 		skillRoot := filepath.Join(path, entry.Name())
 		if err := requireRegularFile(filepath.Join(skillRoot, "SKILL.md"), "skill definition"); err != nil {
 			return err
+		}
+		definition, err := os.ReadFile(filepath.Join(skillRoot, "SKILL.md"))
+		if err != nil {
+			return fmt.Errorf("read skill definition: %w", err)
+		}
+		if !utf8.Valid(definition) {
+			return fmt.Errorf("canonical skill %q definition must be UTF-8 Markdown", entry.Name())
 		}
 		if err := filepath.WalkDir(skillRoot, func(filePath string, file fs.DirEntry, walkErr error) error {
 			if walkErr != nil {

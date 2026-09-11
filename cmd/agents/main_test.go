@@ -9,6 +9,34 @@ import (
 	"testing"
 )
 
+func TestNativeSkillWarningsInTextCommands(t *testing.T) {
+	for _, command := range []string{"plan", "apply", "sync"} {
+		t.Run(command, func(t *testing.T) {
+			repo := t.TempDir()
+			skills := filepath.Join(repo, ".agents", "skills", "fixture")
+			if err := os.MkdirAll(skills, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for path, body := range map[string]string{
+				filepath.Join(repo, ".agents", "AGENTS.md"):     "Fixture.\n",
+				filepath.Join(repo, ".agents", "manifest.json"): `{"version":"1.1.0-draft.2","profiles":["skills"]}`,
+				filepath.Join(skills, "SKILL.md"):               "---\nname: fixture\ndescription: Fixture.\nallowed-tools: ['*']\n---\nFixture.\n",
+			} {
+				if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var output bytes.Buffer
+			if err := run([]string{command, "--vendor", "copilot", "--experimental", "--root", repo}, &output, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), "warning\t") || !strings.Contains(output.String(), "still requests approval") {
+				t.Fatalf("missing loss warning: %s", output.String())
+			}
+		})
+	}
+}
+
 func TestRunInitValidateAndPlanApply(t *testing.T) {
 	root := t.TempDir()
 	withWorkingDirectory(t, root)

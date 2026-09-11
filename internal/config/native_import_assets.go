@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // Read only recognized skill packages. Built-in system packages and unrelated
@@ -25,6 +26,15 @@ func nativeImportSkills(source, destination string) ([]nativeChange, []string, e
 	var changes []nativeChange
 	var excluded []string
 	for _, entry := range entries {
+		if entry.Name() == ".gitkeep" && entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return nil, nil, err
+			}
+			if info.Size() == 0 {
+				continue
+			}
+		}
 		if entry.Name() == ".system" {
 			excluded = append(excluded, "skills/.system")
 			continue
@@ -64,6 +74,9 @@ func nativeImportSkills(source, destination string) ([]nativeChange, []string, e
 			if err != nil {
 				return err
 			}
+			if path == definition && !utf8.Valid(data) {
+				return fmt.Errorf("native skill %q definition must be UTF-8 Markdown", entry.Name())
+			}
 			info, err := child.Info()
 			if err != nil {
 				return err
@@ -82,7 +95,7 @@ func nativeImportSkills(source, destination string) ([]nativeChange, []string, e
 	return changes, excluded, nil
 }
 
-// Read only registry-defined, flat native artifact directories. Do not traverse
+// Read only registry-defined native artifact directories. Do not traverse
 // the native home or import account, session, managed-policy, or plugin stores.
 func nativeImportArtifactFiles(vendor, scope, base, root, namespace string) ([]nativeChange, []nativeArtifact, []string, error) {
 	type artifactDirectory struct{ kind, suffix string }
@@ -94,6 +107,16 @@ func nativeImportArtifactFiles(vendor, scope, base, root, namespace string) ([]n
 	var artifacts []nativeArtifact
 	var exclusions []string
 	for _, directory := range directories {
+		if directory.kind == "scoped-instructions" {
+			files, declarations, skipped, err := nativeImportScopedInstructions(scope, base, root, namespace)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			changes = append(changes, files...)
+			artifacts = append(artifacts, declarations...)
+			exclusions = append(exclusions, skipped...)
+			continue
+		}
 		example, _, err := nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: directory.kind, Name: "fixture" + directory.suffix})
 		if err != nil {
 			return nil, nil, nil, err
@@ -149,11 +172,15 @@ func nativeImportArtifactFiles(vendor, scope, base, root, namespace string) ([]n
 						return nil, nil, nil, err
 					}
 				}
+				if err := nativeCheckRuntimeAuthentication(vendor, values); err != nil {
+					return nil, nil, nil, fmt.Errorf("cannot import native artifact %s: %w", entry.Name(), err)
+				}
 				filtered, excluded := nativeImportFilter(vendor, values, nil)
+				rebasedSkills := vendor == "codex" && directory.kind == "agent" && nativeRebaseCodexAgentSkillImport(filtered, base, sourceDir, scope)
 				for _, path := range excluded {
 					exclusions = append(exclusions, artifact.Source+":"+path)
 				}
-				if len(excluded) > 0 {
+				if len(excluded) > 0 || rebasedSkills {
 					data, err = nativeEncode(filtered, format)
 					if err != nil {
 						return nil, nil, nil, err

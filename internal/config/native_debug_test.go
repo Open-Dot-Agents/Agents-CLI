@@ -173,8 +173,14 @@ func TestNativePolicyChecksUseFieldContext(t *testing.T) {
 		"approval-keybinding": "[tui.keymap.approval]\napprove = 'ctrl+y'\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			repo := nativeFixture(t, "project", data)
-			if _, err := ApplyProjection("codex", repo, ApplyOptions{Experimental: true}); err != nil {
+			scope := "project"
+			options := ApplyOptions{Experimental: true}
+			if strings.HasPrefix(data, "[model_providers.") {
+				scope, options.Scope, options.NativeHome = "user", "user", t.TempDir()
+				t.Setenv("XDG_STATE_HOME", t.TempDir())
+			}
+			repo := nativeFixture(t, scope, data)
+			if _, err := ApplyProjection("codex", repo, options); err != nil {
 				t.Fatal(err)
 			}
 			values, err := parseNative([]byte(data), "toml")
