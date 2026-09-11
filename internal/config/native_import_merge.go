@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func nativeImportExisting(root string) (bool, error) {
+func nativeImportExisting(root string, sharedProjectSkills bool) (bool, error) {
 	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	} else if err != nil {
@@ -17,6 +17,9 @@ func nativeImportExisting(root string) (bool, error) {
 	}
 	var manifest manifestDocument
 	if err := nativeDecodePolicy(filepath.Join(root, "manifest.json"), &manifest); err != nil {
+		if sharedProjectSkills && errors.Is(err, os.ErrNotExist) {
+			return nativeImportSharedSkillTree(root)
+		}
 		return false, err
 	}
 	if manifest.Version != NativeVersion {
@@ -40,6 +43,15 @@ func nativeMergeImport(root string, changes []nativeChange, instructionsProvided
 		snapshot, err := nativeReadSnapshot(change.path)
 		if err != nil {
 			return nil, err
+		}
+		if change.remove {
+			if change.path != filepath.Join(root, "skills/.gitkeep") || change.before == nil || !change.before.equal(snapshot) || len(snapshot.data) != 0 {
+				return nil, fmt.Errorf("native import refuses removal of changed or non-placeholder content")
+			}
+			if snapshot.exists {
+				merged = append(merged, change)
+			}
+			continue
 		}
 		change.before = &snapshot
 		if !snapshot.exists {
@@ -106,7 +118,11 @@ func nativeMergeImport(root string, changes []nativeChange, instructionsProvided
 				fields, _ := artifact.(map[string]any)
 				for _, previous := range prior {
 					previousFields, _ := previous.(map[string]any)
-					if fields["source"] == previousFields["source"] && nativeHash(artifact) != nativeHash(previous) {
+					sameSource := fields["source"] == previousFields["source"]
+					if relative == "native/com.github.copilot/profile.json" && (fields["kind"] == "canonical-instructions") != (previousFields["kind"] == "canonical-instructions") {
+						sameSource = false // Fixed core source and namespace file are different sources.
+					}
+					if sameSource && nativeHash(artifact) != nativeHash(previous) {
 						return nil, fmt.Errorf("native import conflicts with an existing artifact declaration")
 					}
 				}

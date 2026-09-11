@@ -284,6 +284,11 @@ func writePlan(stdout io.Writer, result config.PlanResult, format string) error 
 	if format == "json" {
 		return json.NewEncoder(stdout).Encode(result)
 	}
+	for _, warning := range result.Warnings {
+		if _, err := fmt.Fprintf(stdout, "warning\t%s\n", warning); err != nil {
+			return err
+		}
+	}
 	if !result.Applicable {
 		for _, diagnostic := range result.Diagnostics {
 			if _, err := fmt.Fprintln(stdout, diagnostic); err != nil {
@@ -305,6 +310,11 @@ func writeSync(stdout io.Writer, result config.SyncResult, format string) error 
 		return json.NewEncoder(stdout).Encode(result)
 	}
 	for _, vendor := range result.Vendors {
+		for _, warning := range vendor.Warnings {
+			if _, err := fmt.Fprintf(stdout, "%s\twarning\t%s\n", vendor.Vendor, warning); err != nil {
+				return err
+			}
+		}
 		if !vendor.Applicable {
 			for _, diagnostic := range vendor.Diagnostics {
 				if _, err := fmt.Fprintf(stdout, "%s\tdiagnostic\t%s\n", vendor.Vendor, diagnostic); err != nil {

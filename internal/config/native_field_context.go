@@ -10,6 +10,18 @@ func nativePolicyField(vendor string, path []string) bool {
 		return false
 	}
 	if vendor == "codex" {
+		if len(path) == 3 && path[0] == "model_providers" {
+			switch path[2] {
+			case "requires_openai_auth":
+				// This Boolean selects native account authentication. Dropping
+				// true would restore the false default; it is not a credential.
+				return false
+			case "auth":
+				// This table configures a token command. Its fields must pass
+				// the complete-unit check; returned tokens remain external.
+				return false
+			}
+		}
 		if path[0] == "tui" && path[1] == "keymap" {
 			return false
 		}

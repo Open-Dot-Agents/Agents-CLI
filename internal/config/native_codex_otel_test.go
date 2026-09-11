@@ -128,6 +128,14 @@ func TestNativeCodexOtelCredentials(t *testing.T) {
 					t.Fatal("credential imported")
 				}
 			}
+			filtered, err := parseNative([]byte(readNativeTest(t, filepath.Join(imported, ".agents/native/com.openai.codex/config.toml"))), "toml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			otel, _ := filtered["otel"].(map[string]any)
+			if otel["exporter"] != "none" {
+				t.Fatal("credential removal left the exporter active or allowed a native default")
+			}
 			if readNativeTest(t, filepath.Join(home, "config.toml")) != data {
 				t.Fatal("import changed source")
 			}
@@ -182,10 +190,10 @@ func TestNativeCodexOtelHTTPIdentityIsAtomic(t *testing.T) {
 			}
 			before := nativeHash(values)
 			selected, inactive := nativeSelectConfig("codex", "user", values)
-			if len(inactive) != 1 || inactive[0].Path != "/otel/"+signal+"/otlp-http" {
+			if len(inactive) != 1 || inactive[0].Path != "/otel/"+signal {
 				t.Fatal("missing whole-exporter refusal", inactive)
 			}
-			if nativeHash(selected) != nativeHash(map[string]any{"otel": map[string]any{"environment": "fixture"}}) || before != nativeHash(values) {
+			if nativeHash(selected) != nativeHash(map[string]any{"otel": map[string]any{"environment": "fixture", signal: "none"}}) || before != nativeHash(values) {
 				t.Fatal("identity was dropped or source changed")
 			}
 			if nativeMappedValue("codex", "user", "otel", values["otel"]) {
@@ -208,6 +216,63 @@ func TestNativeCodexOtelHTTPIdentityIsAtomic(t *testing.T) {
 			if strings.Contains(readNativeTest(t, filepath.Join(home, "config.toml")), "endpoint") {
 				t.Fatal("unauthenticated exporter activated")
 			}
+			applied, err := parseNative([]byte(readNativeTest(t, filepath.Join(home, "config.toml"))), "toml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if applied["otel"].(map[string]any)[signal] != "none" {
+				t.Fatal("native default was not disabled")
+			}
 		})
+	}
+}
+
+func TestNativeCodexOtelOptionalCredentialsDisableWholeExporter(t *testing.T) {
+	for _, signal := range []string{"exporter", "trace_exporter", "metrics_exporter"} {
+		for _, transport := range []string{"otlp-http", "otlp-grpc"} {
+			t.Run(signal+"/"+transport, func(t *testing.T) {
+				data := "[analytics]\nenabled = true\n[otel]\nenvironment = 'fixture'\n[otel." + signal + "." + transport + "]\nendpoint = 'https://collector.invalid'\nheaders.Authorization = 'Bearer ODA_PRIVATE_VALUE'\n"
+				if transport == "otlp-http" {
+					data += "protocol = 'binary'\n"
+				}
+				values, err := parseNative([]byte(data), "toml")
+				if err != nil {
+					t.Fatal(err)
+				}
+				before := nativeHash(values)
+				selected, inactive := nativeSelectConfig("codex", "user", values)
+				if len(inactive) != 1 || inactive[0].Path != "/otel/"+signal || inactive[0].Disposition != "external" {
+					t.Fatalf("exporter exclusion missing: %v", inactive)
+				}
+				if selected["otel"].(map[string]any)[signal] != "none" || nativeHash(values) != before {
+					t.Fatal("exporter remained active or source was changed")
+				}
+				filtered, excluded := nativeImportFilter("codex", values, nil)
+				if filtered["otel"].(map[string]any)[signal] != "none" || len(excluded) != 1 || excluded[0] != "otel."+signal {
+					t.Fatal("import did not retain explicit disablement")
+				}
+				repo := nativeFixture(t, "user", data)
+				profile := filepath.Join(repo, ".agents/native/com.openai.codex/profile.json")
+				writeFixture(t, profile, strings.Replace(readNativeTest(t, profile), `"required":true`, `"required":false`, 1))
+				home := t.TempDir()
+				t.Setenv("XDG_STATE_HOME", t.TempDir())
+				plan, err := ApplyProjection("codex", repo, ApplyOptions{Experimental: true, Scope: "user", NativeHome: home})
+				if err != nil {
+					t.Fatal(err)
+				}
+				output := readNativeTest(t, filepath.Join(home, "config.toml"))
+				encoded, _ := json.Marshal(plan)
+				if strings.Contains(output+string(encoded), "ODA_PRIVATE_VALUE") || strings.Contains(output, "collector.invalid") {
+					t.Fatal("credential-bearing exporter was projected")
+				}
+				applied, err := parseNative([]byte(output), "toml")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if applied["otel"].(map[string]any)[signal] != "none" {
+					t.Fatal("native default was not disabled")
+				}
+			})
+		}
 	}
 }

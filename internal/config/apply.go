@@ -46,6 +46,7 @@ type PlanResult struct {
 	Applicable    bool          `json:"applicable"`
 	Actions       []Action      `json:"actions"`
 	Diagnostics   []string      `json:"diagnostics,omitempty"`
+	Warnings      []string      `json:"warnings,omitempty"`
 }
 
 // SyncResult is the aggregate plan/apply contract for one or all stable
@@ -84,11 +85,20 @@ func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) erro
 	if options.Experimental || options.Scope != "" || options.NativeHome != "" {
 		return importNativeRepository(vendor, root, options)
 	}
+	return importStableRepository(vendor, root, options, atomicWrite)
+}
+
+func importStableRepository(vendor, root string, options WriteOptions, write managedWriter) error {
+	manifestPath := filepath.Join(root, ".agents", "manifest.json")
+	manifestBefore, err := snapshotManagedFile(manifestPath)
+	if err != nil {
+		return err
+	}
 	if err := guardSecurityImport(filepath.Join(root, ".agents"), options.Experimental); err != nil {
 		return err
 	}
 	force, backup := options.Force, options.Backup
-	vendor, err := normalizeStableVendor(vendor)
+	vendor, err = normalizeStableVendor(vendor)
 	if err != nil {
 		return err
 	}
@@ -99,7 +109,7 @@ func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) erro
 	if err != nil {
 		return err
 	}
-	servers, err := readVendorMCP(vendor, root)
+	servers, err := readVendorMCPWithPolicy(vendor, root, true)
 	hasTools := err == nil
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) || !hasHooks {
@@ -124,36 +134,41 @@ func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) erro
 			servers[name] = converted
 		}
 	}
+	// Versioned imports must validate the canonical representation before any
+	// content or backup write. Legacy native literals are not portable refs.
+	serverNames := make([]string, 0, len(servers))
+	for name := range servers {
+		serverNames = append(serverNames, name)
+	}
+	sort.Strings(serverNames)
+	for _, name := range serverNames {
+		data, err := json.Marshal(servers[name])
+		if err != nil {
+			return err
+		}
+		if err := validateCanonicalServer(name, data, true); err != nil {
+			return fmt.Errorf("ODA-IMPORT-0003: %w", err)
+		}
+	}
 	agentsRoot := filepath.Join(root, ".agents")
+	if err := validateInstructionDiscovery(agentsRoot); err != nil {
+		return err
+	}
+	// Check skill inputs before creating backups or changing canonical files.
+	// Codex and Copilot read the canonical skills directory in place.
+	skillsSource := vendorSkillsPath(vendor, root)
+	hasSkills := false
+	if _, err := os.Lstat(skillsSource); err == nil {
+		if err := validateSkills(skillsSource); err != nil {
+			return err
+		}
+		hasSkills = true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	instructions, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if err != nil {
 		return fmt.Errorf("read repository instructions: %w", err)
-	}
-	managed := []string{
-		filepath.Join(agentsRoot, "AGENTS.md"),
-		filepath.Join(agentsRoot, "manifest.json"),
-	}
-	if hasTools {
-		managed = append(managed, filepath.Join(agentsRoot, "tools", "mcp.json"))
-	}
-	if hasHooks {
-		managed = append(managed, filepath.Join(agentsRoot, "hooks", "hooks.json"))
-	}
-	if !force {
-		for _, path := range managed {
-			if _, err := os.Lstat(path); err == nil {
-				return fmt.Errorf("refusing to overwrite %q without --force", path)
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
-	}
-	if backup {
-		for _, path := range managed {
-			if err := backupPath(path); err != nil {
-				return err
-			}
-		}
 	}
 	profiles := []string{}
 	if hasTools {
@@ -162,34 +177,98 @@ func ImportRepositoryWithOptions(vendor, root string, options WriteOptions) erro
 	if hasHooks {
 		profiles = append(profiles, "hooks")
 	}
-	if info, err := os.Lstat(vendorSkillsPath(vendor, root)); err == nil && info.IsDir() {
+	if hasSkills {
 		profiles = append(profiles, "skills")
-		if vendor == "claude" {
-			if err := copySkills(vendorSkillsPath(vendor, root), filepath.Join(agentsRoot, "skills"), force); err != nil {
+	}
+	manifest, err := stableImportManifest(agentsRoot, profiles)
+	if err != nil {
+		return err
+	}
+	writes := map[string][]byte{
+		filepath.Join(agentsRoot, "AGENTS.md"):     instructions,
+		filepath.Join(agentsRoot, "manifest.json"): append(manifest, '\n'),
+	}
+	modes := map[string]fs.FileMode{}
+	if hasSkills && vendor == "claude" {
+		if err := filepath.WalkDir(skillsSource, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			snapshot, err := snapshotManagedFile(path)
+			if err != nil {
 				return err
 			}
+			if !snapshot.existed {
+				return fmt.Errorf("native skill input disappeared")
+			}
+			relative, err := filepath.Rel(skillsSource, path)
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(agentsRoot, "skills", relative)
+			writes[target], modes[target] = snapshot.data, snapshot.permissions
+			return nil
+		}); err != nil {
+			return err
 		}
-	}
-	manifest, _ := json.MarshalIndent(map[string]any{"version": manifestVersion, "profiles": profiles}, "", "  ")
-	if err := atomicWrite(filepath.Join(agentsRoot, "AGENTS.md"), instructions, 0o644); err != nil {
-		return err
-	}
-	if err := atomicWrite(filepath.Join(agentsRoot, "manifest.json"), append(manifest, '\n'), 0o644); err != nil {
-		return err
 	}
 	if hasTools {
 		data, _ := json.MarshalIndent(mcpDocument{Servers: servers}, "", "  ")
-		if err := atomicWrite(filepath.Join(agentsRoot, "tools", "mcp.json"), append(data, '\n'), 0o644); err != nil {
-			return err
-		}
+		writes[filepath.Join(agentsRoot, "tools", "mcp.json")] = append(data, '\n')
 	}
 	if hasHooks {
 		data, _ := json.MarshalIndent(hooks, "", "  ")
-		if err := atomicWrite(filepath.Join(agentsRoot, "hooks", "hooks.json"), append(data, '\n'), 0o644); err != nil {
+		writes[filepath.Join(agentsRoot, "hooks", "hooks.json")] = append(data, '\n')
+	}
+	preconditions := map[string]managedSnapshot{}
+	for path := range writes {
+		snapshot, err := snapshotManagedFile(path)
+		if err != nil {
 			return err
 		}
+		preconditions[path] = snapshot
 	}
-	return Validate(agentsRoot)
+	preconditions[manifestPath] = manifestBefore
+	if err := validateStableImportTree(agentsRoot, writes); err != nil {
+		return err
+	}
+	return commitStableImport(writes, modes, preconditions, WriteOptions{Force: force, Backup: backup}, write)
+}
+
+// Force permits replacing imported content, not removing portable policy or
+// deactivating profiles absent from this native source. Keep other metadata.
+func stableImportManifest(root string, importedProfiles []string) ([]byte, error) {
+	path := filepath.Join(root, "manifest.json")
+	profiles, exists, err := validateManifest(path)
+	if err != nil {
+		return nil, err
+	}
+	document := map[string]json.RawMessage{"version": json.RawMessage(`"` + manifestVersion + `"`)}
+	if exists {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &document); err != nil {
+			return nil, err
+		}
+	}
+	for _, profile := range importedProfiles {
+		if !nativeHasProfile(profiles, profile) {
+			profiles = append(profiles, profile)
+		}
+	}
+	if profiles == nil {
+		profiles = []string{}
+	}
+	document["profiles"], err = json.Marshal(profiles)
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(document, "", "  ")
 }
 
 func portableizeClaude(server MCPServer) (MCPServer, error) {

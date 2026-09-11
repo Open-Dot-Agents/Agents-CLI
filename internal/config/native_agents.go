@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// The standalone Codex agent contract adds three required fields to native
-// configuration. Source: rust-v0.154.0 agent-roles and the custom agent reference.
+// Standalone roles use bounded child overrides, not general config layers.
+// Source: rust-v0.154.0 core/src/agent/role.rs and the pinned native role probe.
 // Keep unknown or blocked content inactive as a whole standalone artifact.
 func nativeCodexAgent(data []byte, scope string) (string, error) {
 	values, err := parseNative(data, "toml")
@@ -24,15 +24,23 @@ func nativeCodexAgent(data []byte, scope string) (string, error) {
 	name := strings.TrimSpace(values["name"].(string))
 	delete(values, "name")
 	delete(values, "description")
+	if err = nativeCheckRuntimeAuthentication("codex", values); err != nil {
+		return "", err
+	}
 	if err = nativeCodexAliases(values, false); err != nil {
 		return "", err
 	}
-	selected, inactive := nativeSelectConfig("codex", scope, values)
+	if err = nativeCodexRoleOverrides(values); err != nil {
+		return "", err
+	}
+	// Role files use the same bounded session overrides in both discovery scopes.
+	// General project-config stripping does not apply to this native layer.
+	selected, inactive := nativeSelectConfig("codex", "user", values)
 	if len(inactive) > 0 {
 		return "", fmt.Errorf("native agent field %s cannot activate: %s", inactive[0].Path, inactive[0].Reason)
 	}
 	for _, key := range nativeSortedKeys(selected) {
-		disposition, reason := nativeSettingDisposition("codex", scope, key, selected[key])
+		disposition, reason := nativeSettingDisposition("codex", "user", key, selected[key])
 		if disposition != "configuration" {
 			return "", fmt.Errorf("native agent setting %s cannot activate: %s", key, reason)
 		}

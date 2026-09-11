@@ -88,6 +88,9 @@ func nativeSettingDeclarations(vendor string) []NativeSettingDeclaration {
 		}
 		scopes := []string{}
 		for _, scope := range []string{"project", "user"} {
+			if vendor == "codex" && scope == "project" && nativeCodexProjectRestriction(parts) != "" {
+				continue
+			}
 			if vendor == "codex" && scope == "project" && len(parts) >= 2 && parts[0] == "skills" && parts[1] == "config" {
 				continue
 			}

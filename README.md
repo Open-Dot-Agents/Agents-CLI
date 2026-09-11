@@ -38,6 +38,19 @@ go test ./...
 Source builds report `agents dev`. Release artifacts embed their version with
 Go linker flags.
 
+The inventory and semantic coverage tools live in `scripts/` in this CLI
+repository. They use the parent Open-Dot-Agents checkout for canonical data
+and Workbench evidence. From the parent checkout, run:
+
+```sh
+python3 CLI/scripts/native_coverage.py --check
+python3 CLI/scripts/native_coverage_test.py
+```
+
+Use `CLI/scripts/build-feature-inventory.py --help` for inventory generation.
+Keep generated configuration and coverage data under `.agents/`; keep
+maintenance programs in this submodule.
+
 ## Workflow
 
 ```sh
@@ -251,3 +264,157 @@ that another writer has replaced. Existing user instruction files remain
 unchanged, including with `--force`. The Claude file adapter also creates its
 initial `CLAUDE.md` bridge. An empty regular `.agents/skills/.gitkeep` is a
 placeholder; other unselected skill content still refuses Codex/Copilot apply.
+
+Draft.2 project apply and import accept the verified root canonical link for
+Codex and Copilot. Apply preserves that link. When an old Codex instruction
+copy has been replaced with the link, apply releases its old file ownership.
+For Copilot, apply removes an unchanged owned `.github/copilot-instructions.md`
+copy. Modified or foreign files remain protected, including with `--force`.
+Import reads the canonical file directly. Copilot records a fixed
+`canonical-instructions` binding with `source: "AGENTS.md"` and no `name`.
+This source refers to `.agents/AGENTS.md`, and its destination is root
+`AGENTS.md`. After relocation without the link, apply creates a managed root
+file. A separate native `instructions` artifact preserves a distinct
+`.github/copilot-instructions.md` body. Referenced files remain external;
+removal refuses a known change to the reference base. See the
+[canonical instruction report](../docs/COPILOT_CANONICAL_INSTRUCTIONS.md).
+This does not migrate stable manifests to draft.2.
+
+Pinned Linux checks cover both migration paths, repeated apply/import, and
+updated instructions in fresh native model contexts. They do not establish
+live reload or all native instruction precedence cases. See the
+[instruction-link debug record](../docs/NATIVE_DEBUG_RESEARCH.md#draft2-instruction-links-and-re-import).
+
+### User instruction sources
+
+Draft.2 user instruction import preserves an existing artifact source such as
+`policy/local.md` for the fixed native instruction file. Reimport refuses
+duplicate targets and conflicting policy, including with force. Copilot plans
+report external user references and session restart requirements. Use explicit
+`--scope user --native-home /absolute/path`; project apply leaves that user
+file unchanged. See the [user instruction report](../docs/COPILOT_USER_INSTRUCTIONS.md).
+
+### Skill encoding and project source checks
+
+Draft.2 Copilot plans report each selected skill, model and user invocation
+controls, and known metadata losses. Malformed discovery metadata refuses
+projection before writes. The `warnings` array is also printed by text plan,
+apply, and sync. Valid definitions retain their bytes through user import,
+apply, and reimport. Stable Markdown rules remain unchanged. See the
+[skill metadata report](../docs/COPILOT_SKILL_METADATA.md) for native limits.
+
+Draft.2 project import reads complete Copilot packages from `.github/skills/`
+and `.claude/skills/` under the supplied root. It stores them in `.agents/skills/`,
+selects `skills`, and preserves original packages. Existing `.agents/skills/`
+packages are selected in place. A bare shared skill tree can establish draft.2
+metadata without replacing its files or modes. Only recognized skill packages
+and an optional regular `.agents/AGENTS.md` are accepted without a manifest.
+Malformed manifests and other unversioned canonical content refuse. Import, plan, and apply
+refuse different packages with overlapping native identities, even with
+`--force`. Import removes an empty canonical skill marker transactionally;
+`--backup` stores it under `.agents/state/import-backups/`, outside the skill
+discovery tree. See the [project skill import report](../docs/COPILOT_SKILL_IMPORT.md).
+
+Draft.2 Copilot import also reads nested `*.instructions.md` files from the
+registered project or user instruction directory. Relative paths and file
+contents survive relocation. Unsafe names and symlinks refuse before writes;
+nested assets use the existing file ownership and rollback rules. Native
+evidence covers direct unconditional loading and explicit model reads from the
+native instruction catalog. Plan reports that user instructions outside trusted
+directories can need native read permission. Apply does not grant trust. See
+the [instruction report](../docs/COPILOT_RECURSIVE_INSTRUCTIONS.md) for model-guided
+selection and approval limits.
+
+Draft.2 project import reads a regular root `AGENTS.md`. Native
+`agent-instructions` artifacts preserve root reference syntax and distinct
+agent instruction bodies at fixed project paths. Other registered files are
+`CLAUDE.md`, `.claude/CLAUDE.md`, and `GEMINI.md`. Referenced project files remain
+external. In the tested Copilot version, `.claude/CLAUDE.md` loads from a
+`.claude` working directory but not from repository-root sessions. See the
+[native agent instruction report](../docs/COPILOT_AGENT_INSTRUCTIONS.md).
+
+Selected `SKILL.md` definitions must be UTF-8 Markdown. Projection rejects
+invalid encoding in stable, draft.1, and draft.2 trees. Stable repository import
+and native user-scope skill import check definitions before content writes and
+backups. Supporting skill assets can contain binary data and are preserved.
+
+Project maintenance checks for pinned external skills and the requested GitHub
+package are under `scripts/check_project_extensions.py`. Run its companion
+`scripts/check_project_extensions_test.py` to check changed files, extra files,
+symlinks, escaping paths, and unpinned revisions. These checks do not install
+packages, convert native plugin formats, or establish native runtime support.
+See the [project readiness report](../docs/PROJECT_EXTENSIONS_READINESS.md).
+
+### Stable import safety
+
+Stable repository import checks MCP fields and the prospective canonical tree
+before it writes content or backups. Codex literal `env` and `http_headers`
+values are refused, including strings that resemble portable reference URIs.
+Mixed literal and reference inputs cannot silently discard a value. Unknown
+server fields, including activation, authentication, and tool-filter controls,
+are refused when no stable mapping exists. Diagnostics do not include values.
+
+`--force` preserves existing manifest requirements, metadata, and selected
+profiles. It does not deactivate a retained profile that is absent from the
+native source. Retained selected content must still validate. Native import has
+separate draft.2 support and migration rules; stable import does not implicitly
+enable that profile or migrate an existing manifest.
+
+An import failure rolls back imported files, new directories, and backups.
+Existing file modes are preserved; new backups use `0600`. New skill assets
+retain their source mode. Changes observed after validation or before a target
+write cause refusal. This does not claim the stronger native user-scope lock
+and authority guarantees for stable project import.
+
+See the [stable import evidence](../docs/NATIVE_DEBUG_RESEARCH.md#stable-import-credentials-policy-and-rollback).
+
+### Native telemetry authentication
+
+Native MCP, model-provider, and LSP definitions refuse import or projection
+when credential exclusion would remove authentication. This includes optional
+profiles and forced writes. Supported environment references remain intact.
+Codex `requires_openai_auth` remains a Boolean setting; account files stay
+external. See the [authentication tests and limits](../docs/NATIVE_AUTHENTICATION.md).
+
+Codex native telemetry exporters with excluded credentials use the explicit
+value `none`. Import reports identify each disabled exporter. Optional apply
+uses the same value for unsupported HTTP client identities; required content
+still blocks apply. The adapter does not remove authentication and leave a
+weaker exporter active, or omit a setting that restores a native default.
+
+The pinned user-scope native evidence now covers gRPC and HTTP binary logs,
+traces, and metrics, including CA trust and gRPC client certificates. Metrics
+require analytics to be enabled. See the
+[transport and authentication report](../docs/CODEX_OTEL_TRANSPORTS.md) for
+source pins, native events, regression evidence, and limits.
+
+### Native provider token commands
+
+Draft.2 preserves Codex `model_providers.<id>.auth` as configuration. The whole
+token-command table is validated before import or projection. Invalid fields
+and conflicting authentication modes refuse before writes. Apply does not run
+the helper or copy its returned token. Codex `0.154.0` can send unauthenticated
+requests after helper failure; this native setting is not authentication
+enforcement. See the [native evidence and limits](../docs/CODEX_COMMAND_AUTHENTICATION.md).
+
+### Codex project scope
+
+Draft.2 refuses required project fields that Codex `0.154.0` ignores. Optional
+source content stays preserved and inactive. This includes provider selection
+and definitions, endpoint overrides, notifications, profiles, telemetry,
+host metadata, and the system-proxy flag. User files remain unchanged. See the
+[scope table, tests, and limits](../docs/CODEX_PROJECT_SCOPE.md).
+
+### Codex child-role files
+
+Draft.2 validates agent files against the bounded native role contract.
+Ignored provider, MCP, context, or other session settings refuse required
+activation before writes. Optional files stay intact and inactive as a whole.
+Model and instruction overrides and selected feature or skill reductions use
+the same role layer in project and user scope. See the
+[role mapping and native evidence](../docs/CODEX_ROLE_OVERRIDES.md).
+
+Import resolves relative role-file paths and role skill selectors against their
+native source directory. References to mapped assets remain relative; external
+libraries retain absolute source references and are not copied. See the
+[relocation tests and limits](../docs/CODEX_ROLE_REFERENCES.md).

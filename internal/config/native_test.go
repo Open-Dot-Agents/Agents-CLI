@@ -225,11 +225,12 @@ func TestNativeNestedOwnershipAndUnknownChild(t *testing.T) {
 	}
 }
 func TestNativeParentConflict(t *testing.T) {
-	repo := nativeFixture(t, "project", "[model_providers.local]\nname = \"Local\"\n")
-	os.MkdirAll(filepath.Join(repo, ".codex"), 0700)
-	path := filepath.Join(repo, ".codex/config.toml")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := nativeFixture(t, "user", "[model_providers.local]\nname = \"Local\"\n")
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
 	os.WriteFile(path, []byte("model_providers = \"unowned\"\n"), 0600)
-	if _, e := ApplyProjection("codex", repo, ApplyOptions{Experimental: true, Force: true}); e == nil {
+	if _, e := ApplyProjection("codex", repo, ApplyOptions{Experimental: true, Scope: "user", NativeHome: home, Force: true}); e == nil {
 		t.Fatal("parent setting overwritten")
 	}
 	if readNativeTest(t, path) != "model_providers = \"unowned\"\n" {

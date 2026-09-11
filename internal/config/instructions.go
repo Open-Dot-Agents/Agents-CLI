@@ -3,9 +3,37 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
+
+func validateInstructionDiscovery(root string) error {
+	repositoryRoot := filepath.Dir(root)
+	return filepath.WalkDir(repositoryRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".state" || path == root) {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() && path != repositoryRoot {
+			if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+				return filepath.SkipDir
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		}
+		if entry.Name() != "AGENTS.md" {
+			return nil
+		}
+		canonical := filepath.Join(filepath.Dir(path), ".agents", "AGENTS.md")
+		if path == filepath.Join(repositoryRoot, "AGENTS.md") {
+			canonical = filepath.Join(root, "AGENTS.md")
+		}
+		return validateInstructionFile(path, canonical)
+	})
+}
 
 func prepareRootInstructionLink(root string, state ownershipState, options ApplyOptions) (map[string]string, map[string]string, error) {
 	links, owned := map[string]string{}, map[string]string{}

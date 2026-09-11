@@ -88,8 +88,14 @@ func nativeSelectField(vendor, scope string, path []string, value any) (any, boo
 		if reason := nativeCodexOtelConstraint(path, value); reason != "" {
 			return reject("inactive", reason)
 		}
-		if scope == "project" && len(path) == 1 && path[0] == "otel" {
-			return reject("inactive", "Codex 0.154.0 ignores project telemetry; use native user scope")
+		if scope == "project" {
+			if reason := nativeCodexProjectRestriction(path); reason != "" {
+				return reject("native-ignored", reason)
+			}
+		}
+		if disposition, reason := nativeCodexOtelExporterProblem(path, value); reason != "" {
+			_, _, inactive := reject(disposition, reason)
+			return "none", true, inactive
 		}
 		if nativeCodexOtelExcluded(path, value) {
 			return reject("external", "telemetry credential value or invalid collector URL is excluded")
@@ -211,6 +217,9 @@ func nativeInactiveFeatures(base NativeFeature, kind string, inactive []nativeIn
 		feature.Feature = fmt.Sprintf("%s:%s", kind, field.Path)
 		feature.Disposition, feature.Limitation = field.Disposition, field.Reason
 		feature.Activation, feature.NativeStatus, feature.Evidence = "inactive", "unverified", nil
+		if field.Disposition == "native-ignored" && base.Scope == "project" && kind == "config" {
+			feature.NativeStatus, feature.Evidence = "native-effective-configuration", nativeCodexProjectScopeEvidence()
+		}
 		features = append(features, feature)
 	}
 	return features
