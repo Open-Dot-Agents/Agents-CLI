@@ -139,6 +139,9 @@ func nativePlanCopilotSkills(plan *PlanResult, root, base, scope string) error {
 		feature := NativeFeature{Feature: "skill", Source: source, Destination: destination, Scope: scope,
 			Ownership: ownership, Authority: "native discovery; no trust or permission grant",
 			Disposition: "portable-mapping", Activation: "pending native discovery", NativeStatus: "bounded-skill-metadata"}
+		if scope == "user" {
+			feature = nativeCopilotUserSkillFeature(feature)
+		}
 		fields, err := nativeCopilotSkillFields(data)
 		if err != nil {
 			feature.Activation, feature.Disposition, feature.NativeStatus = "projection refused", "unmapped", "unverified"

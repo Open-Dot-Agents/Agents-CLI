@@ -131,7 +131,7 @@ func nativeSameSkillPackage(a, b []nativeChange) bool {
 }
 
 func nativeCopilotProjectSkillImportCapabilities() []NativeFeature {
-	var features []NativeFeature
+	features := []NativeFeature{nativeCopilotInheritedSkillFeature()}
 	for _, origin := range []string{".github/skills/", ".agents/skills/", ".claude/skills/"} {
 		features = append(features, NativeFeature{
 			Feature: "artifact:skill-discovery:/" + origin, Source: origin, Destination: ".agents/skills/<name>/", Scope: "project",

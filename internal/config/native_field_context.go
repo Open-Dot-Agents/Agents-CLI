@@ -10,6 +10,9 @@ func nativePolicyField(vendor string, path []string) bool {
 		return false
 	}
 	if vendor == "codex" {
+		if len(path) == 3 && path[0] == "mcp_servers" && path[2] == "tools" {
+			return false
+		}
 		if len(path) == 3 && path[0] == "model_providers" {
 			switch path[2] {
 			case "requires_openai_auth":

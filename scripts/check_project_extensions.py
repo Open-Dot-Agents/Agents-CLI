@@ -63,6 +63,12 @@ def check(root):
     native = root / '.agents/plugins/com.openai.codex'
     package = native / 'plugins/github'
     sources['github'] = verify_source(package, native / 'provenance.json')
+    provenance = json.loads((native / 'provenance.json').read_text())
+    require(provenance.get('transformations') == [{
+        'path': '.mcp.json',
+        'reason': 'Add the Copilot-compatible Authorization environment reference while retaining the Codex bearer field.',
+        'upstream_sha256': '730ebd45944d5f46aeded73c8fa8a2e5765726c626a8605671809d6159d31edd',
+    }], 'unreviewed GitHub compatibility transformation')
     plugin = json.loads((package / '.codex-plugin/plugin.json').read_text())
     require(plugin['name'] == 'github' and plugin['version'] == '0.1.11', 'unexpected GitHub package identity')
     for key in ('composerIcon', 'logo', 'logoDark'):
@@ -76,7 +82,9 @@ def check(root):
     require(catalog['plugins'][0]['policy'] == {'installation': 'AVAILABLE', 'authentication': 'ON_INSTALL'}, 'unexpected marketplace policy')
     mcp = json.loads((package / '.mcp.json').read_text())
     require(mcp == {'mcpServers': {'github': {'type': 'http', 'url': 'https://api.githubcopilot.com/mcp/',
-                                           'bearer_token_env_var': 'GITHUB_PAT_TOKEN'}}}, 'unreviewed GitHub MCP configuration')
+                                           'bearer_token_env_var': 'GITHUB_PAT_TOKEN',
+                                           'headers': {'Authorization': 'Bearer ${GITHUB_PAT_TOKEN}'}}}},
+            'unreviewed GitHub MCP configuration')
     return {'passed': True, 'check': 'pinned-source-integrity', 'sources': sources,
             'native_execution_checked': False, 'adapter_support_promoted': False}
 

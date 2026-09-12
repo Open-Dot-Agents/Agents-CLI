@@ -51,6 +51,7 @@ type NativeFeature struct {
 	Limitation   string   `json:"limitation,omitempty"`
 }
 type NativePlan struct {
+	GlobalSource    string                     `json:"global_source,omitempty"`
 	StandardVersion string                     `json:"standard_version"`
 	Platforms       []string                   `json:"platforms"`
 	Scope           string                     `json:"scope"`
@@ -265,10 +266,14 @@ func nativeTargetPath(vendor, scope, base string, a nativeArtifact) (string, str
 			}
 			relative = name
 		case "canonical-instructions":
-			if vendor != "copilot" || scope != "project" || a.Source != "AGENTS.md" || name != "" {
-				return "", "", fmt.Errorf("canonical instructions require the fixed Copilot project core binding")
+			if a.Source != "AGENTS.md" || name != "" ||
+				!(vendor == "copilot" && scope == "project" || scope == "user" && (vendor == "copilot" || vendor == "codex")) {
+				return "", "", fmt.Errorf("canonical instructions require a registered core binding")
 			}
 			relative = "AGENTS.md"
+			if vendor == "copilot" && scope == "user" {
+				relative = "copilot-instructions.md"
+			}
 		case "agent":
 			if !safeNativeRelative(name) || strings.Contains(name, "/") {
 				return "", "", fmt.Errorf("agent requires a file name")
@@ -568,12 +573,17 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 	if m.Version != NativeVersion {
 		return b, fmt.Errorf("native projection requires %s", NativeVersion)
 	}
+	globalSource, err := nativeGlobalSource(vendor, root, options.Scope)
+	if err != nil {
+		return b, err
+	}
 	if diagnostics, e := requiredCapabilityDiagnostics(vendor, root); e != nil {
 		return b, e
 	} else if len(diagnostics) > 0 {
 		return b, fmt.Errorf("%s", strings.Join(diagnostics, "; "))
 	}
-	if options.Scope != "user" {
+	userHome, _ := os.UserHomeDir()
+	if options.Scope != "user" || root == filepath.Join(userHome, ".agents") {
 		selected := map[string]bool{}
 		for _, profile := range m.Profiles {
 			selected[profile] = true
@@ -620,6 +630,13 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		return b, err
 	}
 	b.plan = PlanResult{SchemaVersion: NativeVersion, Vendor: vendor, Root: filepath.Dir(root), Actions: []Action{}, Native: &NativePlan{StandardVersion: NativeVersion, Platforms: []string{"linux"}, Scope: scope, NativeHome: home, Versions: []string{nativePinnedVersion(vendor)}, Features: []NativeFeature{}, RequiredActions: []string{"Use the pinned native CLI version.", "Reload native configuration. Login, plugin installation, scheduling, and execution are separate native operations."}}}
+	if globalSource != "" {
+		b.plan.Native.GlobalSource = globalSource
+		b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, "Apply global defaults separately with --global and an explicit native home. Project values override user defaults according to native field precedence; instruction bodies can accumulate. This project operation does not write or verify user projection state.")
+	}
+	if vendor == "copilot" && scope == "project" {
+		nativePlanCopilotInheritedSkills(&b.plan, root, nativeHasProfile(m.Profiles, "skills"))
+	}
 	if vendor == "copilot" && nativeHasProfile(m.Profiles, "skills") {
 		if err = nativePlanCopilotSkills(&b.plan, root, base, scope); err != nil {
 			return b, err
@@ -701,7 +718,7 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 					e = fmt.Errorf("plugin selection profiles only project configuration")
 				}
 				if e != nil || !versionOK {
-					if scope == "project" && p.directory == "native" && a.Kind == "canonical-instructions" {
+					if p.directory == "native" && a.Kind == "canonical-instructions" {
 						return b, fmt.Errorf("cannot choose a portable instruction target from an unmapped canonical binding")
 					}
 					feature.Disposition = "inactive"
@@ -712,7 +729,7 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 					}
 					continue
 				}
-				if a.Kind == "canonical-instructions" {
+				if a.Kind == "canonical-instructions" && scope == "project" {
 					if canonicalBinding {
 						return b, fmt.Errorf("duplicate canonical instruction binding")
 					}
@@ -728,6 +745,18 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 					return b, e
 				}
 				if format == "" {
+					if (a.Kind == "instructions" || a.Kind == "canonical-instructions") && !utf8.Valid(data) {
+						return b, fmt.Errorf("native instructions must be UTF-8 Markdown")
+					}
+					if a.Kind == "canonical-instructions" {
+						if bytes.Contains(data, []byte("@")) {
+							return b, fmt.Errorf("user canonical instructions with @ references require an explicit native instruction artifact to preserve the reference base")
+						}
+						feature = nativeUserCoreFeature(feature)
+					}
+					if vendor == "copilot" && scope == "project" && a.Kind == "instructions" {
+						feature = nativeGithubInstructionFeature(feature)
+					}
 					if vendor == "copilot" && scope == "user" && a.Kind == "instructions" {
 						feature = nativeCopilotUserInstructionFeature(feature)
 						b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, nativeUserInstructionReferenceAction)
@@ -1008,6 +1037,9 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 			if e = validateInstructionFile(link, src); e != nil {
 				return b, e
 			}
+			if vendor == "copilot" && !canonicalBinding && bytes.Contains(data, []byte("@")) {
+				return b, fmt.Errorf("root instruction link has an ambiguous native reference base; reimport the original .github instructions or declare the canonical binding for root-relative core instructions")
+			}
 			if targets[link] != nil || !canonicalBinding && targets[path] != nil {
 				return b, fmt.Errorf("duplicate native assignment for %s", path)
 			}
@@ -1127,36 +1159,48 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		}
 	}
 	if scope == "user" && nativeHasProfile(m.Profiles, "skills") {
-		skillRoot := filepath.Join(root, "skills")
-		err = filepath.WalkDir(skillRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			if e := nativeNoSymlinks(path); e != nil {
-				return e
-			}
-			if !entry.Type().IsRegular() {
-				return fmt.Errorf("skill asset must be a regular file")
-			}
-			relative, e := filepath.Rel(skillRoot, path)
-			if e != nil {
-				return e
-			}
-			dest, format, e := nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: "skill", Name: relative})
-			if e != nil {
-				return e
-			}
-			data, e := nativeReadFile(path)
-			if e != nil {
-				return e
-			}
-			return add(dest, format, "", data, path, true)
-		})
-		if err != nil {
+		if err = nativeCheckUserSkillProjection(vendor, root, base, state); err != nil {
 			return b, err
+		}
+		skillRoot := filepath.Join(root, "skills")
+		if nativeSharedGlobalSkills(vendor, root, base) {
+			b.plan.Native.Features = append(b.plan.Native.Features, NativeFeature{
+				Feature: "skills:global-discovery", Source: skillRoot, Destination: skillRoot, Scope: "user",
+				Disposition: "portable-mapping", Activation: "native shared user discovery", NativeStatus: "unverified",
+				Ownership: "canonical source; no native copy", Authority: "native discovery; no trust grant",
+				Limitation: "Use the same HOME for the native client. Global shared skills remain at ~/.agents/skills; projection to the matching default native home does not duplicate packages.",
+			})
+		} else {
+			err = filepath.WalkDir(skillRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				if e := nativeNoSymlinks(path); e != nil {
+					return e
+				}
+				if !entry.Type().IsRegular() {
+					return fmt.Errorf("skill asset must be a regular file")
+				}
+				relative, e := filepath.Rel(skillRoot, path)
+				if e != nil {
+					return e
+				}
+				dest, format, e := nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: "skill", Name: relative})
+				if e != nil {
+					return e
+				}
+				data, e := nativeReadFile(path)
+				if e != nil {
+					return e
+				}
+				return add(dest, format, "", data, path, true)
+			})
+			if err != nil {
+				return b, err
+			}
 		}
 	}
 
@@ -1478,6 +1522,14 @@ func nativePlanBackups(b *nativeBuild) error {
 		if c.remove && len(old) == 0 && filepath.Base(c.path) == ".gitkeep" && filepath.Base(skillsDir) == "skills" && filepath.Base(canonical) == ".agents" {
 			backup = filepath.Join(canonical, "state/import-backups/skills.gitkeep.bak")
 		}
+		// A backup inside a skill becomes an active package asset. Keep user
+		// skill backups in private state, indexed by the same native home.
+		if b.plan.Native != nil && b.plan.Native.Scope == "user" && b.registryPath != "" {
+			relative, err := filepath.Rel(b.plan.Native.NativeHome, c.path)
+			if err == nil && safeNativeRelative(relative) && strings.HasPrefix(relative, "skills"+string(filepath.Separator)) {
+				backup = filepath.Join(filepath.Dir(b.registryPath), "backups", strings.TrimSuffix(filepath.Base(b.registryPath), ".json"), relative+".bak")
+			}
+		}
 		if err = nativeNoSymlinks(backup); err != nil {
 			return err
 		}
@@ -1643,6 +1695,9 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 			return e
 		}
 		foundSource = true
+		if kind == "instructions" && !utf8.Valid(data) {
+			return fmt.Errorf("native instructions must be UTF-8 Markdown")
+		}
 		if format != "" {
 			values, e := parseNative(data, format)
 			if e != nil {
@@ -1759,6 +1814,28 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 			}
 		}
 		if kind == "instructions" && scope == "project" {
+			// Native references resolve relative to .github. Keep that body at
+			// its registered native path, including after relocation to a
+			// project that discovers the portable core through a root link.
+			if vendor == "copilot" && !bindings.Core && bytes.Contains(data, []byte("@")) {
+				if agentInstructionSources["AGENTS.md"] != "" {
+					return fmt.Errorf("GitHub reference import requires a canonical root binding that conflicts with an existing native root instruction artifact")
+				}
+				if existing && !rootRegular {
+					core, err := nativeReadFile(filepath.Join(root, "AGENTS.md"))
+					if err != nil {
+						return err
+					}
+					if bytes.Contains(core, []byte("@")) {
+						return fmt.Errorf("existing portable instructions have an ambiguous native reference base; declare their root binding or resolve the references before import")
+					}
+				}
+				bindings.Core = true
+				p.Artifacts = append(p.Artifacts, nativeArtifact{Kind: "canonical-instructions", Source: "AGENTS.md"})
+				if rootRegular {
+					instructions, instructionsProvided = rootInstructions, true
+				}
+			}
 			if vendor == "copilot" && bindings.Core {
 				p.Artifacts = append(p.Artifacts, bindings.Native)
 				changes = append(changes, nativeChange{path: filepath.Join(root, "native", ns, bindings.Native.Source), data: data, mode: 0600})
@@ -1779,6 +1856,11 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 				return err
 			}
 			source = artifact.Source
+			if artifact.Kind == "canonical-instructions" {
+				p.Artifacts = append(p.Artifacts, artifact)
+				instructions, instructionsProvided = data, true
+				continue
+			}
 		}
 		p.Artifacts = append(p.Artifacts, artifact)
 		changes = append(changes, nativeChange{path: filepath.Join(root, "native", ns, source), data: data, mode: 0600})
@@ -1828,6 +1910,17 @@ func importNativeRepository(vendor, root string, options WriteOptions) error {
 		}
 		excluded = append(excluded, skipped...)
 		if len(assets) > 0 {
+			if err := nativeCheckUserSkillImport(vendor, filepath.Join(root, "skills"), assets); err != nil {
+				return err
+			}
+			marker := filepath.Join(root, "skills/.gitkeep")
+			snapshot, err := nativeReadSnapshot(marker)
+			if err != nil {
+				return err
+			}
+			if snapshot.exists && len(snapshot.data) == 0 {
+				changes = append(changes, nativeChange{path: marker, remove: true, before: &snapshot})
+			}
 			changes = append(changes, assets...)
 			profiles = append(profiles, "skills")
 			foundSource = true
@@ -2002,6 +2095,7 @@ func nativeCapabilities(vendor string) *NativePlan {
 			p.Features = append(p.Features, nativeCopilotPreferenceCapabilities(scope, pluginTarget)...)
 			p.Features = append(p.Features, nativeCopilotSubagentCapabilities(scope, pluginTarget)...)
 			if scope == "user" {
+				p.Features = append(p.Features, nativeCopilotUserSkillCapabilities()...)
 				feature := nativeCopilotUserInstructionFeature(NativeFeature{
 					Feature: "artifact:instructions", Source: "native profile artifact", Destination: "<native-home>/copilot-instructions.md", Scope: scope,
 					Activation: "import then project; start a new native session", Ownership: "file", Authority: "explicit native home; no trust or account writes",
@@ -2018,6 +2112,11 @@ func nativeCapabilities(vendor string) *NativePlan {
 			p.Features = append(p.Features, nativeCopilotInstructionDiscoveryCapability(scope))
 			if scope == "project" {
 				p.Features = append(p.Features, nativeCopilotProjectSkillImportCapabilities()...)
+				p.Features = append(p.Features, nativeGithubInstructionFeature(NativeFeature{
+					Feature: "artifact:instruction-discovery:/.github/copilot-instructions.md", Source: ".github/copilot-instructions.md",
+					Destination: "<project-root>/.github/copilot-instructions.md", Scope: scope,
+					Activation: "import then project; start a new native session", Ownership: "file", Authority: "fixed registry project path; referenced files remain external",
+				}))
 				p.Features = append(p.Features, nativeCanonicalInstructionFeature(NativeFeature{
 					Feature: "artifact:canonical-instructions", Source: ".agents/AGENTS.md", Destination: "<project-root>/AGENTS.md",
 					Scope: scope, Activation: "fixed core binding; start a new native session", Ownership: "file, except existing verified canonical link",
@@ -2044,6 +2143,11 @@ func nativeCapabilities(vendor string) *NativePlan {
 					Limitation: "Imports plain root AGENTS.md into the portable core. Native agent-instructions artifacts preserve root @ references and distinct root and Copilot instruction bodies at their original paths. Projection refuses stale regular root instructions that differ from the canonical body. Projection uses .github/copilot-instructions.md unless a fixed canonical-instructions binding or verified canonical compatibility link selects the root path. Referenced project files remain external. Nested discovery and live reload are not covered.",
 				})
 			}
+		}
+		if scope == "user" {
+			path, _, _ := nativeTargetPath(vendor, scope, "<native-home>", nativeArtifact{Kind: "canonical-instructions", Source: "AGENTS.md"})
+			p.Features = append(p.Features, nativeUserCoreFeature(NativeFeature{Feature: "artifact:canonical-instructions", Source: ".agents/AGENTS.md", Destination: path, Scope: scope,
+				Activation: "fixed core binding; start a new native session", Ownership: "file", Authority: "explicit native home; no trust grant"}))
 		}
 		for _, artifact := range []nativeArtifact{{Kind: "mcp"}, {Kind: "lsp"}, {Kind: "agent", Name: "<name>.toml"}, {Kind: "scoped-instructions", Name: "<name>.instructions.md"}, {Kind: "hooks", Name: "<name>.json"}} {
 			// Resolve a safe sample through the same target registry used by apply.

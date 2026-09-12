@@ -27,7 +27,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     assert not output.exists() and not output.with_suffix('.runner.py').exists(), 'refuse evidence replacement'
-    root = Path(tempfile.mkdtemp(prefix='oda-stable-import-auth-', dir='/mnt/DATA/tmp'))
+    root = Path(tempfile.mkdtemp(prefix='oda-stable-import-auth-'))
     binary = root / 'agents'
     result = {'passed': False, 'fixture': str(root), 'results': [], 'native_harness_execution': False,
               'runtime_support_promoted': False, 'runner_sha256': sha(__file__),

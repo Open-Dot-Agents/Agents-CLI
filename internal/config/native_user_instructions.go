@@ -25,7 +25,7 @@ func nativeExistingUserInstructionArtifact(root, namespace string, fallback nati
 	}
 	seen := false
 	for _, artifact := range profile.Artifacts {
-		if artifact.Kind != "instructions" {
+		if artifact.Kind != "instructions" && artifact.Kind != "canonical-instructions" {
 			continue
 		}
 		if seen {

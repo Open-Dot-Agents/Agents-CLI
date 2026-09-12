@@ -30,6 +30,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "init":
 		flags := flag.NewFlagSet("init", flag.ContinueOnError)
+		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
+		experimental := flags.Bool("experimental", false, "enable the draft.2 global configuration contract")
 		flags.SetOutput(stderr)
 		root := flags.String("root", ".", "repository root")
 		force := flags.Bool("force", false, "replace the generated starter files")
@@ -42,9 +44,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if flags.NArg() != 0 {
 			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 		}
+		if err := resolveGlobalRoot(flags, *global, *experimental, root, nil); err != nil {
+			return err
+		}
+		if *global {
+			if *force {
+				return errors.New("global init does not replace existing configuration; migrate or edit it explicitly")
+			}
+			return config.InitGlobal(*root)
+		}
+		if *experimental {
+			return errors.New("experimental init requires --global")
+		}
 		return config.Init(*root, *force)
 	case "validate":
 		flags := flag.NewFlagSet("validate", flag.ContinueOnError)
+		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
 		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
 		flags.SetOutput(stderr)
 		root := flags.String("root", ".", "repository root")
@@ -61,7 +76,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
+		if err := resolveGlobalRoot(flags, *global, *experimental, root, nil); err != nil {
+			return err
+		}
 		standardVersion := config.ValidationStandardVersion(filepath.Join(*root, ".agents"), *experimental)
+		if *global && standardVersion != config.NativeVersion {
+			return errors.New("global configuration requires a draft.2 manifest; migrate other formats explicitly")
+		}
 		if err := config.ValidateRepositoryWithOptions(filepath.Join(*root, ".agents"), *experimental); err != nil {
 			if *format == "json" {
 				_ = json.NewEncoder(stdout).Encode(map[string]any{
@@ -106,6 +127,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return json.NewEncoder(stdout).Encode(capabilities)
 	case "import":
 		flags := flag.NewFlagSet("import", flag.ContinueOnError)
+		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
 		scope := flags.String("scope", "", "projection scope: project (default) or user")
 		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		experimental := flags.Bool("experimental", false, "enable the 1.1 draft contract; security activation can be refused")
@@ -126,9 +148,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *vendor == "" {
 			return errors.New("--vendor is required")
 		}
+		if err := resolveGlobalRoot(flags, *global, *experimental, root, scope); err != nil {
+			return err
+		}
 		return config.ImportRepositoryWithOptions(*vendor, *root, config.WriteOptions{Force: *force, Backup: *backup, Experimental: *experimental, Scope: *scope, NativeHome: *nativeHome})
 	case "sync":
 		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
+		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
 		scope := flags.String("scope", "", "projection scope: project (default) or user")
 		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
@@ -156,6 +182,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
+		if err := resolveGlobalRoot(flags, *global, *experimental, root, scope); err != nil {
+			return err
+		}
 		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
 		var result config.SyncResult
 		var err error
@@ -179,6 +208,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "plan", "apply":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
 		scope := flags.String("scope", "", "projection scope: project (default) or user")
 		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
 		codexHome := flags.String("codex-home", "", "existing trusted native home for the experimental Codex Linux subset")
@@ -207,6 +237,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
 		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
+		if err := resolveGlobalRoot(flags, *global, *experimental, root, scope); err != nil {
+			return err
+		}
+		options.Scope = *scope
 		var result config.PlanResult
 		var err error
 		if args[0] == "plan" || *check {
@@ -269,6 +303,11 @@ The 1.1 draft requires --experimental. The Codex Linux direct sandbox subset
 also requires --codex-home and existing native trust. Other security requests
 and native security import are refused. No runtime launcher or trust grant is
 installed. Use --format json to inspect policy, invocation, and authority limits.
+
+Use --global --experimental with init, validate, import, plan, apply, or sync
+to select ~/.agents. Do not combine --global with --root. Global import and
+projection use user scope and require an absolute --native-home. Global init
+creates a private draft.2 tree and refuses existing content, including --force.
 
 Canonical instructions, portable metadata, tools, and skills live below
 .agents. A root AGENTS.md compatibility link and nested AGENTS.md files provide

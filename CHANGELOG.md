@@ -4,6 +4,11 @@ All notable changes to the reference CLI are documented here.
 
 ## Unreleased
 
+- Add experimental global configuration with explicit user destinations and
+  fixed core instruction bindings. Preserve complete user skill packages,
+  private backups, and inherited skill ownership. Validate Codex keybindings
+  and keep MCP output limits separate from approval controls.
+
 - Create a missing root instruction compatibility link during stable apply or
   sync, record its ownership, and roll it back with failed writes. Create the
   initial Claude file bridge. Ignore only empty regular `.gitkeep` skill markers

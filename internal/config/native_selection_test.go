@@ -84,3 +84,18 @@ func TestNativeSelectionKeepsPermissionControlsInactive(t *testing.T) {
 		t.Fatal("permission filter dropped a known sibling or kept an approval grant")
 	}
 }
+
+func TestNativeSelectionKeepsMCPOutputLimitsSeparateFromApprovals(t *testing.T) {
+	values, err := parseNative([]byte("[mcp_servers.fixture.tools.read]\noutput_token_limit = 128\napproval_mode = 'approve'\n"), "toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, inactive := nativeSelectConfig("codex", "user", values)
+	if len(inactive) != 1 || inactive[0].Disposition != "blocked" || !strings.HasSuffix(inactive[0].Path, "/approval_mode") {
+		t.Fatal("approval control did not retain its independent gate", inactive)
+	}
+	encoded, err := nativeEncode(selected, "toml")
+	if err != nil || strings.Contains(string(encoded), "approval_mode") || !strings.Contains(string(encoded), "output_token_limit") {
+		t.Fatal("resource limit and approval control were not separated", string(encoded), err)
+	}
+}

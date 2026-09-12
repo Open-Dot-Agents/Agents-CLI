@@ -102,7 +102,7 @@ func TestNativeCanonicalInstructionBindingValidation(t *testing.T) {
 	for _, scope := range []string{"project", "user"} {
 		for _, vendor := range []string{"codex", "copilot"} {
 			_, _, err := nativeTargetPath(vendor, scope, t.TempDir(), nativeArtifact{Kind: "canonical-instructions", Source: "AGENTS.md"})
-			if (err == nil) != (vendor == "copilot" && scope == "project") {
+			if (err == nil) != (scope == "user" || vendor == "copilot" && scope == "project") {
 				t.Fatal(vendor, scope, err)
 			}
 		}

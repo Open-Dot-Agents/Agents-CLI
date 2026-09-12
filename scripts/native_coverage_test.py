@@ -22,6 +22,55 @@ class NativeCoverageTest(unittest.TestCase):
         rows = [e['entry_id'] for f in self.result['features'] for e in f['evidence']]
         self.assertEqual(collections.Counter(rows), collections.Counter('source-entry-' + str(i) for i in range(1, 1680)))
 
+    def test_settings_artifact_uses_scoped_compiled_targets(self):
+        feature = self.feature('copilot', 'artifact', 'settings.json')
+        self.assertEqual(feature['disposition'], 'artifact-mapping')
+        self.assertEqual(feature['implemented_scopes'], ['user'])
+        self.assertEqual(feature['native_targets'], ['<scope-root>/settings.json'])
+        self.assertEqual(feature['native_status'], 'unverified')
+        self.assertIn('Each setting retains its own validation and native evidence requirements.', feature['limitations'])
+        registry = copy.deepcopy(self.registry)
+        registry['copilot']['__roots__'] = [f for f in registry['copilot']['__roots__'] if f['scope'] != 'user']
+        result = build(self.inventory, registry)
+        missing = next(f for f in result['features'] if f['id'] == feature['id'])
+        self.assertEqual(missing['disposition'], 'mapping-pending')
+
+    def test_sidekick_fields_follow_agent_scope(self):
+        for name in ('triggers', 'behavior', 'maxSendsPerTurn'):
+            feature = self.feature('copilot', 'sidekick', name)
+            self.assertEqual(feature['scope'], ['project', 'user'])
+            self.assertEqual(feature['disposition'], 'native-limitation')
+            self.assertEqual(feature['native_status'], 'bounded-acp-native-ignored')
+            self.assertEqual(feature['version_constraint'], '=1.0.83')
+            self.assertEqual(feature['implemented_scopes'], [])
+            self.assertEqual(len(feature['native_evidence']), 2)
+
+    def test_codex_absent_settings_have_bounded_native_limitations(self):
+        for name in ('model_supports_reasoning_summaries', 'mcp_servers.<name>.experimental_environment', 'features.rollout_budget.reminder_interval_tokens'):
+            feature = self.feature('codex', 'settings', name)
+            self.assertEqual(feature['disposition'], 'native-limitation')
+            self.assertEqual(feature['version_constraint'], '=0.154.0')
+            self.assertEqual(feature['implemented_scopes'], [])
+            self.assertIn('WORKBENCH/conformance/verify_codex_setting_gaps.py', feature['native_evidence'])
+
+    def test_copilot_local_network_is_an_evidenced_native_limitation(self):
+        feature = self.feature('copilot', 'settings', 'sandbox.userPolicy.network.allowLocalNetwork')
+        self.assertEqual(feature['disposition'], 'native-limitation')
+        self.assertEqual(feature['native_status'], 'bounded-local-network-mismatch')
+        self.assertEqual(feature['implemented_scopes'], [])
+        self.assertIn('WORKBENCH/conformance/verify_copilot_local_network.py', feature['native_evidence'])
+
+    def test_codex_keymap_family_requires_concrete_registry_fields(self):
+        feature = self.feature('codex', 'settings', 'tui.keymap.<name>.<name>')
+        self.assertEqual(feature['disposition'], 'value-mapping')
+        self.assertEqual(feature['implemented_scopes'], ['project', 'user'])
+        self.assertEqual(feature['native_status'], 'bounded-terminal-keymap')
+        self.assertIn('Only the external editor action has terminal execution evidence.', feature['limitations'])
+        registry = copy.deepcopy(self.registry)
+        registry['codex'] = {k: v for k, v in registry['codex'].items() if not k.startswith('tui.keymap.')}
+        updated = next(f for f in build(self.inventory, registry)['features'] if f['id'] == feature['id'])
+        self.assertEqual(updated['disposition'], 'mapping-pending')
+
     def test_native_artifact_paths_use_existing_scope_declarations(self):
         for name, kind in [('agents/', 'agent'), ('hooks/', 'hooks'), ('mcp-config.json', 'mcp'), ('lsp-config.json', 'lsp')]:
             feature = self.feature('copilot', 'artifact', name)
@@ -43,7 +92,7 @@ class NativeCoverageTest(unittest.TestCase):
             self.assertEqual(feature['scope_dispositions'], {'project': 'native-ignored'})
             self.assertNotIn('native_evidence', feature)
 
-    def test_user_directory_aliases_do_not_complete_missing_mappings(self):
+    def test_user_directory_aliases_do_not_duplicate_mappings(self):
         for name, location in [('skills/', '~/.copilot/skills/'), ('copilot-instructions.md', '$HOME/.copilot/copilot-instructions.md')]:
             alias = self.feature('copilot', 'artifact', name)
             target = self.feature('copilot', 'discovery-location', location)
@@ -51,7 +100,7 @@ class NativeCoverageTest(unittest.TestCase):
             self.assertEqual(alias['disposition'], 'syntax-reference')
             self.assertEqual(alias['describes'], [target['id']])
             self.assertEqual(target['scope'], ['user'])
-            self.assertEqual(target['disposition'], 'mapping-pending' if name == 'skills/' else 'artifact-mapping')
+            self.assertEqual(target['disposition'], 'artifact-mapping')
 
     def test_user_instruction_discovery_has_bounded_native_evidence(self):
         feature = self.feature('copilot', 'discovery-location', '$HOME/.copilot/copilot-instructions.md')
@@ -155,11 +204,40 @@ class NativeCoverageTest(unittest.TestCase):
             self.assertEqual(feature['disposition'], 'artifact-mapping')
             self.assertEqual(feature['native_status'], 'bounded-recursive-instruction-loading')
             self.assertIn('not automatic body injection or deterministic glob enforcement', feature['limitations'][0])
+
         alias = self.feature('copilot', 'artifact', 'instructions/')
         target = self.feature('copilot', 'discovery-location', '$HOME/.copilot/instructions/**/*.instructions.md')
         self.assertFalse(alias['counted_feature'])
         self.assertEqual(alias['describes'], [target['id']])
         self.assertEqual(alias['disposition'], 'syntax-reference')
+
+    def test_github_instruction_import_preserves_reference_base(self):
+        feature = self.feature('copilot', 'discovery-location', '.github/copilot-instructions.md')
+        self.assertEqual(feature['implemented_scopes'], ['project'])
+        self.assertEqual(feature['adapter'], 'CLI/internal/config/native.go')
+        self.assertEqual(feature['native_status'], 'bounded-github-instruction-loading')
+        self.assertIn('Referenced files remain external', ' '.join(feature['limitations']))
+
+    def test_user_skill_paths_require_explicit_homes(self):
+        for source in ('~/.copilot/skills/', '~/.agents/skills/'):
+            feature = self.feature('copilot', 'discovery-location', source)
+            self.assertEqual(feature['implemented_scopes'], ['user'])
+            self.assertEqual(feature['native_status'], 'bounded-user-skill-execution')
+            self.assertEqual(feature['adapter'], 'CLI/internal/config/native_user_skill_import.go')
+            self.assertIn('explicitly selected --native-home', ' '.join(feature['limitations']))
+
+    def test_parent_skill_mapping_uses_the_owning_root(self):
+        feature=self.feature('copilot','discovery-location','Parent .github/skills/')
+        self.assertEqual(feature['disposition'],'portable-mapping')
+        self.assertEqual(feature['implemented_scopes'],['project'])
+        self.assertEqual(feature['adapter'],'CLI/internal/config/native_copilot_inherited_skills.go')
+        self.assertEqual(feature['validation_source'],'CLI/internal/config/native_copilot_skill_import.go')
+        self.assertEqual(feature['native_status'],'bounded-inherited-skill-execution')
+        self.assertIn('Child import never captures parent assets',' '.join(feature['limitations']))
+        registry=copy.deepcopy(self.registry)
+        registry['copilot']['__artifacts__']=[f for f in registry['copilot']['__artifacts__'] if f['feature']!='artifact:skill-discovery:/Parent .github/skills/']
+        fallback=next(f for f in build(self.inventory,registry)['features'] if f['id']==feature['id'])
+        self.assertEqual(fallback['disposition'],'mapping-pending')
 
     def test_agent_instruction_locations_keep_native_scope_limits(self):
         for name in ('CLAUDE.md', 'GEMINI.md'):
@@ -178,7 +256,7 @@ class NativeCoverageTest(unittest.TestCase):
         self.assertIn('docs/COPILOT_CANONICAL_INSTRUCTIONS.md', feature['native_evidence'])
         self.assertIn('WORKBENCH/conformance/verify_copilot_canonical_instructions.py', feature['native_evidence'])
         bindings = [f for f in self.result['native_artifacts']['copilot']
-                    if f['feature'] == 'artifact:canonical-instructions']
+                    if f['feature'] == 'artifact:canonical-instructions' and f['scope'] == 'project']
         self.assertEqual(len(bindings), 1)
         binding = bindings[0]
         self.assertEqual(binding['scope'], 'project')
@@ -186,6 +264,14 @@ class NativeCoverageTest(unittest.TestCase):
         self.assertEqual(binding['destination'], '<project-root>/AGENTS.md')
         self.assertEqual(binding['native_status'], 'bounded-canonical-instruction-loading')
         self.assertFalse(any(f['native'] == 'canonical-instructions' for f in self.result['features']))
+
+    def test_user_core_bindings_do_not_inherit_project_evidence(self):
+        for vendor, destination in [('codex', 'AGENTS.md'), ('copilot', 'copilot-instructions.md')]:
+            bindings = [f for f in self.result['native_artifacts'][vendor]
+                        if f['feature'] == 'artifact:canonical-instructions' and f['scope'] == 'user']
+            self.assertEqual(len(bindings), 1)
+            self.assertEqual(bindings[0]['destination'], '<native-home>/'+destination)
+            self.assertEqual(bindings[0]['native_status'], 'unverified')
 
     def test_plugin_discovery_is_separate_from_execution(self):
         for vendor, names in [('codex', ['plugins.<name>.enabled', 'marketplaces.<name>.source', 'marketplaces.<name>.ref']),
@@ -385,6 +471,17 @@ class NativeCoverageTest(unittest.TestCase):
         feature = self.feature('codex', 'settings', 'agents.max_concurrent_threads_per_session')
         self.assertIn('agents.max_threads', {e['native_name'] for e in feature['evidence']})
 
+    def test_mcp_tool_resource_limit_is_not_classified_as_approval_control(self):
+        feature = self.feature('codex', 'settings',
+                               'mcp_servers.<name>.tools.<name>.output_token_limit')
+        self.assertEqual(feature['disposition'], 'validator-declared')
+        self.assertNotEqual(feature['disposition'], 'security-evidence-required')
+
+        for name in ('mcp_servers.<name>.tools.<name>.approval_mode',
+                     'plugins.<name>.mcp_servers.<name>.tools.<name>.approval_mode'):
+            self.assertEqual(self.feature('codex', 'settings', name)['disposition'],
+                             'security-evidence-required')
+
     def test_identity_does_not_depend_on_implementation(self):
         other = build(self.inventory, {'codex': {}, 'copilot': {}})
         self.assertEqual([f['id'] for f in self.result['features']], [f['id'] for f in other['features']])
@@ -442,7 +539,9 @@ class NativeCoverageTest(unittest.TestCase):
         features = [f for f in records if f['counted_feature']]
         milestone = [f for f in features if f['milestone_scope'] == 'linux-cli']
         for name, rows in [('record_counts', records), ('counts', features), ('milestone_counts', milestone)]:
-            self.assertEqual(self.result[name], dict(collections.Counter(f['disposition'] for f in rows)))
+            expected=collections.Counter(f['disposition'] for f in rows)
+            expected['mapping-pending']+=0
+            self.assertEqual(self.result[name], dict(expected))
         self.assertEqual(self.result['coverage_records'], len(records))
         self.assertEqual(self.result['semantic_features'], len(features))
         self.assertEqual(self.result['milestone_features'], len(milestone))

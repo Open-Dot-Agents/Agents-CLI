@@ -85,6 +85,9 @@ func nativeSelectField(vendor, scope string, path []string, value any) (any, boo
 		}
 	}
 	if vendor == "codex" {
+		if reason := nativeCodexKeymapConstraint(path, value); reason != "" {
+			return reject("inactive", reason)
+		}
 		if reason := nativeCodexOtelConstraint(path, value); reason != "" {
 			return reject("inactive", reason)
 		}

@@ -104,6 +104,9 @@ func nativeCodexValue(key string, value any) bool {
 	if decoder.Decode(&document) != nil || !nativeFiniteJSON(document) {
 		return false
 	}
+	if !nativeCodexKeymapDocument(key, document.(map[string]any)[key]) {
+		return false
+	}
 	if nativeCodexAliases(document.(map[string]any), true) != nil {
 		return false
 	}

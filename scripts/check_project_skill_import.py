@@ -27,7 +27,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     assert not output.exists() and not output.with_suffix('.runner.py').exists()
-    base = Path(tempfile.mkdtemp(prefix='oda-project-skill-cli-', dir='/mnt/DATA/tmp'))
+    base = Path(tempfile.mkdtemp(prefix='oda-project-skill-cli-'))
     binary = base / 'agents'
     result = {'passed': False, 'fixture': str(base), 'commands': [], 'cases': [],
               'native_harness_execution': False, 'runner_sha256': sha(__file__),

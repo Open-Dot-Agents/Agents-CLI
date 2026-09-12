@@ -88,7 +88,8 @@ def classify(entry):
         elif section == 'Skill frontmatter fields':
             context = 'skill-frontmatter'
         elif section == 'Sidekick configuration fields':
-            context, scope = 'sidekick', ['user']
+            # The fields belong to agent frontmatter, not user settings.
+            context = 'sidekick'
         elif section in ('Custom instructions locations', 'Skill locations'):
             context = 'discovery-location'
             if name in ('.github/skills/', '.claude/skills/', '.agents/skills/', 'Parent .github/skills/',
@@ -191,6 +192,65 @@ def build(inventory, registry):
                                  'section': entry['section']})
     for item in groups.values():
         category = item['category']
+        absent_codex = {
+            'model_supports_reasoning_summaries': ('bounded-native-ignored', 'Pinned Codex sends the same reasoning metadata with the field omitted, false, or an invalid string. The field is absent from the pinned type and schema.'),
+            'mcp_servers.<name>.experimental_environment': ('bounded-native-ignored', 'Pinned Codex starts the stdio MCP fixture locally even with remote placement requested. The field is absent from the pinned server schema; remote execution is not implemented by this setting.'),
+            'features.rollout_budget.reminder_interval_tokens': ('bounded-native-refused', 'Pinned Codex rejects this field. The same enabled rollout budget with the current reminder_at_remaining_tokens field passes native configuration loading.'),
+        }
+        if item['vendor'] == 'codex' and item['context'] == 'settings' and item['native'] in absent_codex:
+            status, reason = absent_codex[item['native']]
+            item.update(disposition='native-limitation', native_status=status, version_constraint='=0.154.0', implemented_scopes=[],
+                        native_evidence=['WORKBENCH/conformance/verify_codex_setting_gaps.py', 'WORKBENCH/evidence/native-draft2-debug/codex-remaining-settings.sources.json'],
+                        limitations=[reason, 'Evidence covers the pinned app-server with an isolated provider and workspace. Other versions and interfaces remain unverified.', 'Required content remains refused; optional content remains inactive.'])
+            continue
+        if item['vendor'] == 'codex' and item['context'] == 'settings' and item['native'] == 'tui.keymap.<name>.<name>':
+            declarations = [value for key, value in registry['codex'].items() if key.startswith('tui.keymap.') and isinstance(value, dict)]
+            if declarations:
+                item.update(adapter='CLI/internal/config/native_codex_keymap.go', validation_source='CLI/internal/config/native_schemas/codex-0.154.0.json',
+                            disposition='value-mapping', native_status='bounded-terminal-keymap',
+                            implemented_scopes=sorted({scope for declaration in declarations for scope in declaration['scopes']}),
+                            native_targets=sorted({row['destination'] for row in registry['codex']['__roots__'] if row['feature'] == 'tui'}),
+                            native_evidence=['WORKBENCH/conformance/verify_codex_keymap.py'],
+                            limitations=['Only pinned schema context and action names activate. Binding values use the pinned native grammar and retain source spelling and array order.',
+                                         'Only the external editor action has terminal execution evidence.',
+                                         'The terminal evidence covers replacement of a built-in shortcut, two-stroke chords, updates, and explicit empty-list unbinding in project and user scope.',
+                                         'Keyboard labels that name approval actions do not change the portable security gates.'])
+                continue
+        if item['vendor'] == 'copilot' and item['context'] == 'sidekick':
+            item.update(disposition='native-limitation', native_status='bounded-acp-native-ignored',
+                        version_constraint='=1.0.83', implemented_scopes=[],
+                        native_evidence=['WORKBENCH/evidence/native-draft2-debug/copilot-sidekick-'+scope+'-ignored.json' for scope in ('project', 'user')],
+                        limitations=['Pinned Copilot logs unknown field ignored: sidekick in project and user agent definitions, including with --experimental.',
+                                     'The ACP probe discovers the agent but starts no sidekick; this does not establish behavior in other versions or interfaces.',
+                                     'Required sidekick content remains refused by the adapter.'])
+            continue
+        if item['vendor'] == 'copilot' and item['context'] == 'settings' and item['native'] == 'sandbox.userPolicy.network.allowLocalNetwork':
+            item.update(disposition='native-limitation', native_status='bounded-local-network-mismatch',
+                        version_constraint='=1.0.83', implemented_scopes=[],
+                        adapter='CLI/internal/config/native_selection.go',
+                        validation_source='CLI/internal/config/native.go',
+                        native_evidence=['WORKBENCH/conformance/verify_copilot_local_network.py',
+                                         'WORKBENCH/evidence/2026-09-10-copilot-local-classes/result.json'],
+                        limitations=['Pinned Copilot keeps sandbox-local abstract Unix sockets and IPv4 TCP, IPv6 TCP, and UDP loopback available when allowOutbound and allowLocalNetwork are false.',
+                                     'Filesystem denial can hide selected host Unix socket paths but cannot deny all local connection classes.',
+                                     'Portable network.local deny remains refused. Other versions and runtimes remain unverified.'])
+            continue
+        if item['vendor'] == 'copilot' and item['context'] == 'artifact' and item['native'] == 'settings.json':
+            # Resolve the file through the compiled setting targets. This does
+            # not upgrade any descendant's validation or native evidence.
+            fields = [f for f in registry['copilot'].get('__roots__', [])
+                      if f['scope'] in item['scope'] and f['disposition'] == 'value-mapping'
+                      and f.get('destination') and f['ownership'] == 'setting']
+            if fields:
+                item.update(adapter='CLI/internal/config/native.go',
+                            validation_source='CLI/internal/config/native_selection.go',
+                            disposition='artifact-mapping',
+                            implemented_scopes=sorted({f['scope'] for f in fields}),
+                            native_targets=sorted({f['destination'] for f in fields}),
+                            limitations=['Import and projection use the registered JSONC configuration file with setting ownership.',
+                                         'Each setting retains its own validation and native evidence requirements.',
+                                         'Unknown optional settings remain inactive; required unmapped settings and excluded authority refuse activation.'])
+                continue
         if item['vendor'] == 'copilot' and item['context'] == 'artifact' and item['native'] in COPILOT_ARTIFACT_DECLARATIONS:
             kind, validator = COPILOT_ARTIFACT_DECLARATIONS[item['native']]
             fields = [f for f in registry['copilot'].get('__artifacts__', [])
@@ -207,7 +267,7 @@ def build(inventory, registry):
         if item['vendor'] == 'copilot' and item['context'] == 'discovery-location':
             instructions = [f for f in registry['copilot'].get('__artifacts__', []) if f['feature'] == 'artifact:instruction-discovery:/' + item['native']]
             if instructions:
-                implementation = 'native.go' if item['native'] == 'AGENTS.md' else 'native_agent_instructions.go' if item['native'] in ('CLAUDE.md', '.claude/CLAUDE.md', 'GEMINI.md') else 'native_recursive_instructions.go'
+                implementation = 'native.go' if item['native'] in ('AGENTS.md', '.github/copilot-instructions.md') else 'native_agent_instructions.go' if item['native'] in ('CLAUDE.md', '.claude/CLAUDE.md', 'GEMINI.md') else 'native_recursive_instructions.go'
                 item.update(adapter='CLI/internal/config/'+implementation,
                             validation_source='CLI/internal/config/'+implementation,
                             disposition=instructions[0]['disposition'], native_status=instructions[0]['native_status'],
@@ -217,8 +277,12 @@ def build(inventory, registry):
                 continue
             fields = [f for f in registry['copilot'].get('__artifacts__', []) if f['feature'] == 'artifact:skill-discovery:/' + item['native']]
             if fields:
-                item.update(adapter='CLI/internal/config/native_copilot_skill_import.go',
-                            validation_source='CLI/internal/config/native_copilot_skill_import.go',
+                implementation = 'native_user_skill_import.go' if item['scope'] == ['user'] else 'native_copilot_skill_import.go'
+                validator = implementation
+                if item['native'] == 'Parent .github/skills/':
+                    implementation = 'native_copilot_inherited_skills.go'
+                item.update(adapter='CLI/internal/config/'+implementation,
+                            validation_source='CLI/internal/config/'+validator,
                             disposition=fields[0]['disposition'], native_status=fields[0]['native_status'],
                             implemented_scopes=sorted({f['scope'] for f in fields}),
                             native_evidence=sorted({p for f in fields for p in f.get('evidence', [])}),
@@ -424,6 +488,10 @@ def build(inventory, registry):
     features = sorted(groups.values(), key=lambda item: item['id'])
     counted = [f for f in features if f['counted_feature']]
     milestone = [f for f in counted if f['milestone_scope'] == 'linux-cli']
+    def disposition_counts(records):
+        counts = collections.Counter(f['disposition'] for f in records)
+        counts['mapping-pending'] += 0
+        return dict(sorted(counts.items()))
     return {
         'schema_version': 3, 'standard_version': '1.1.0-draft.2',
         'identity_rule': 'vendor plus semantic context plus canonical name; independent of disposition and category',
@@ -433,9 +501,9 @@ def build(inventory, registry):
         'milestone_features': len(milestone), 'complete': False,
         'counts_are_completion': False,
         'native_artifacts': {vendor: registry[vendor].get('__artifacts__', []) for vendor in ('codex', 'copilot')},
-        'counts': dict(sorted(collections.Counter(f['disposition'] for f in counted).items())),
-        'record_counts': dict(sorted(collections.Counter(f['disposition'] for f in features).items())),
-        'milestone_counts': dict(sorted(collections.Counter(f['disposition'] for f in milestone).items())),
+        'counts': disposition_counts(counted),
+        'record_counts': disposition_counts(features),
+        'milestone_counts': disposition_counts(milestone),
         'features': features,
     }
 

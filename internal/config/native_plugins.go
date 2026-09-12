@@ -243,11 +243,11 @@ func nativePluginFeature(vendor string, feature NativeFeature) NativeFeature {
 	feature.Limitation = "The pinned native CLI installs the unchanged Agent Plugins 1.0.0 skill fixture from a local marketplace. Enable, reload, disable, and package preservation are verified. Git fetching is tested separately over loopback HTTP, including a pinned Codex tag and Copilot default branch. Stdio MCP execution and native approvals have separate component evidence. Public HTTPS/SSH services, authentication, automatic updates, other package components, per-server overlays, and arbitrary third-party packages need separate evidence. Native trust and package installation remain external."
 	if vendor == "copilot" {
 		feature.Limitation += " Copilot 1.0.83 does not preserve unknown environment placeholders and leaves PLUGIN_DATA literal in the tested session environment value; full Agent Plugins environment conformance is not verified."
-		feature.Limitation += " The OpenAI GitHub 0.1.11 package can install and expose its HTTP MCP entry while its bearer_token_env_var is ignored. Do not infer authentication or OpenAI app support from successful installation."
+		feature.Limitation += " Copilot 1.0.83 ignores the OpenAI GitHub 0.1.11 bearer_token_env_var. The repository package adds an Authorization environment reference that passes local and public authenticated discovery in both pinned clients. GitHub write operations and OpenAI app support need separate evidence and authorization."
 	}
 	feature.Evidence = []string{"WORKBENCH/evidence/plugin-standard/" + vendor + "-selection-mcp-reviewed-" + feature.Scope + ".json", "WORKBENCH/evidence/plugin-standard/" + vendor + "-git-mcp-reviewed-" + feature.Scope + ".json"}
 	if vendor == "copilot" {
-		feature.Evidence = append(feature.Evidence, "WORKBENCH/evidence/project-tools/github-copilot-auth-present-first.json", "WORKBENCH/evidence/project-tools/github-copilot-auth-missing.json")
+		feature.Evidence = append(feature.Evidence, "WORKBENCH/evidence/native-draft2-debug/copilot-github-shared-header-present.json", "WORKBENCH/evidence/native-draft2-debug/copilot-github-shared-header-missing.json", "WORKBENCH/evidence/native-draft2-debug/native-public-github-plugin-copilot-final-complete.json")
 	}
 	return feature
 }

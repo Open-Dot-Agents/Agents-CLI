@@ -170,7 +170,7 @@ func TestNativePolicyChecksUseFieldContext(t *testing.T) {
 		"role-name":           "[agents.approval-reviewer]\ndescription = 'Review the change.'\n",
 		"provider-name":       "[model_providers.auth-service]\nname = 'Fixture'\nbase_url = 'http://localhost:8888'\n",
 		"header-reference":    "[model_providers.fixture]\nname = 'Fixture'\n[model_providers.fixture.env_http_headers]\nAuthorization = 'FIXTURE_TOKEN'\n",
-		"approval-keybinding": "[tui.keymap.approval]\napprove = 'ctrl+y'\n",
+		"approval-keybinding": "[tui.keymap.approval]\napprove = 'ctrl-y'\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			scope := "project"

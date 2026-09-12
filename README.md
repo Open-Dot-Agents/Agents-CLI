@@ -53,6 +53,21 @@ maintenance programs in this submodule.
 
 ## Workflow
 
+Draft.2 also supports a global source at `~/.agents`. Use
+`agents init --global --experimental` for an empty location, then
+`agents validate --global --experimental`. Global initialization refuses
+existing content, including another tool's configuration format.
+
+Use `agents plan --global --experimental --vendor codex --native-home "$HOME/.codex"`
+to inspect user projection. `apply`, `sync`, and `import` accept the same
+source selector. Copilot uses an explicit native home such as `$HOME/.copilot`.
+`--global` implies user scope and cannot be combined with `--root`.
+Project commands keep their existing source and destination rules. Native
+precedence combines applied user defaults with project values; the CLI does
+not automatically merge two canonical trees. Security and ownership checks
+remain enforced. Global instructions use the fixed user core binding, with
+reference-bearing content subject to explicit native mapping.
+
 ```sh
 agents init --root .
 agents validate --root . --format json
