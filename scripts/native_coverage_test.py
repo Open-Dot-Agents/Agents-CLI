@@ -488,10 +488,19 @@ class NativeCoverageTest(unittest.TestCase):
         self.assertFalse(self.result['complete'])
         self.assertFalse(self.result['counts_are_completion'])
 
-    def test_classification_retains_existing_ids_and_source_assignments(self):
+    def test_identity_corrections_preserve_source_assignments(self):
         baseline = json.loads((ROOT / 'CLI/scripts/testdata/native_coverage/classification-baseline.json').read_text())
         current = {f['id']: sorted(e['entry_id'] for e in f['evidence']) for f in self.result['features']}
-        self.assertEqual(current, baseline['identities'])
+        expected = copy.deepcopy(baseline['identities'])
+        corrections = {
+            'codex.29652d83c9e6ff491f85': 'codex.ee40e04a75c70cfd5fdd',
+            'codex.a9975c43231b3c2dbfbd': 'codex.86e10dce1dec2e3a4970',
+        }
+        for old, new in corrections.items():
+            expected[new] = sorted(expected.get(new, []) + expected.pop(old))
+            feature = next(f for f in self.result['features'] if f['id'] == new)
+            self.assertIn(old, feature['previous_ids'])
+        self.assertEqual(current, expected)
         self.assertEqual(self.result['source_sha256'], baseline['source_sha256'])
 
     def test_permission_values_and_selectors_are_linked_syntax(self):
@@ -508,18 +517,33 @@ class NativeCoverageTest(unittest.TestCase):
         self.assertEqual(parent['gate_scopes'], ['project', 'user'])
 
     def test_table_notation_and_empty_binding_do_not_inflate_counts(self):
-        alias = self.feature('codex', 'settings', '[permissions.<name>.filesystem].<name>')
         parent = self.feature('codex', 'settings', 'permissions.<name>.filesystem.<name>')
-        self.assertEqual(alias['record_kind'], 'alias')
-        self.assertEqual(alias['describes'], [parent['id']])
-        self.assertFalse(alias['counted_feature'])
-        nested = self.feature('codex', 'settings', '[permissions.<name>.filesystem.<name>].<name>')
+        self.assertTrue(parent['counted_feature'])
+        self.assertIn('codex.a9975c43231b3c2dbfbd', parent['previous_ids'])
+        nested = self.feature('codex', 'settings', 'permissions.<name>.filesystem.<name>.<name>')
         self.assertTrue(nested['counted_feature'])
-        self.assertEqual(nested['setting_path'], 'permissions.<name>.filesystem.<name>.<name>')
         self.assertEqual(nested['disposition'], 'security-evidence-required')
+        self.assertIn('codex.29652d83c9e6ff491f85', nested['previous_ids'])
+        self.assertTrue(any('[permissions.' in e['native_name'] for e in nested['evidence']))
+        self.assertFalse(any(f['native'].startswith('[permissions.') for f in self.result['features']))
         unbind = self.feature('codex', 'settings', 'tui.keymap.<name>.<name> = []')
         self.assertEqual(unbind['describes'], [self.feature('codex', 'settings', 'tui.keymap.<name>.<name>')['id']])
         self.assertFalse(unbind['counted_feature'])
+
+    def test_permission_table_forms_share_canonical_identity(self):
+        for path in ('permissions.<profile>.filesystem.<path>',
+                     'permissions.<profile>.filesystem.<path>.<subpath>'):
+            parts = path.split('.')
+            expected = path.replace('<profile>', '<name>').replace('<path>', '<name>').replace('<subpath>', '<name>')
+            for split in range(2, len(parts)):
+                spelling = '[' + '.'.join(parts[:split]) + '].' + '.'.join(parts[split:])
+                entry = {'source': 'codex-permissions', 'section': 'Filesystem permissions',
+                         'surface': 'setting', 'line': 1, 'name': spelling}
+                with self.subTest(spelling=spelling):
+                    classified = classify(entry)
+                    self.assertEqual(classified[:3], ('codex', 'settings', expected))
+                    entry['name'] = classified[2]
+                    self.assertEqual(classify(entry), classified)
 
     def test_desktop_scope_and_platform_boundaries_have_explicit_dispositions(self):
         desktop = self.feature('codex', 'settings', 'desktop.custom_file_handlers.<name>.command')

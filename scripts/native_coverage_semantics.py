@@ -54,12 +54,6 @@ def annotate_records(groups):
                 parent = 'permissions.<name>.filesystem.<name>'
         if name == 'tui.keymap.<name>.<name> = []':
             kind, parent = 'configuration-value', 'tui.keymap.<name>.<name>'
-        if name.startswith('[permissions.') and '].' in name:
-            closing = name.index(']')
-            item['setting_path'] = name[1:closing] + name[closing + 1:]
-            target = groups.get(('codex', 'settings', item['setting_path']))
-            if target:
-                kind, parent = 'alias', item['setting_path']
         if kind:
             target = groups[('codex', 'settings', parent)]
             item.update(record_kind=kind, counted_feature=False,
@@ -68,11 +62,3 @@ def annotate_records(groups):
                         limitations=['Syntax or a value of the linked setting; not a separate setting, operation, or completed mapping.'])
             for field in ('validation_source', 'gate_scopes', 'native_evidence'):
                 item.pop(field, None)
-
-
-def setting_lookup_name(item):
-    name = item['native']
-    if item['vendor'] == 'codex' and item['context'] == 'settings' and name.startswith('[permissions.') and '].' in name:
-        closing = name.index(']')
-        return name[1:closing] + name[closing + 1:]
-    return name

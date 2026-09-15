@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from native_coverage_semantics import annotate_records, setting_lookup_name
+from native_coverage_semantics import annotate_records
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / '.agents/features/codex-copilot.json'
@@ -126,6 +126,9 @@ def classify(entry):
             name = name.strip('[]')
         name = normalized_path(name)
         if vendor == 'codex':
+            if name.startswith('[permissions.') and '].' in name:
+                closing = name.index(']')
+                name = name[1:closing] + name[closing + 1:]
             name = {'agents.max_threads': 'agents.max_concurrent_threads_per_session',
                     'memories.no_memories_if_mcp_or_web_search': 'memories.disable_on_external_context'}.get(name, name)
             if name in ('mcp_servers.<name>.command', 'mcp_servers.<name>.args',
@@ -185,6 +188,10 @@ def build(inventory, registry):
         })
         if item['category'] != category:
             raise ValueError('inconsistent semantic classification: ' + repr(key))
+        original = normalized_path(entry['name'].replace('`', '').strip())
+        if vendor == 'codex' and context == 'settings' and original.startswith('[permissions.') and '].' in original:
+            previous_id = vendor + '.' + hashlib.sha256((context + '\0' + original).encode()).hexdigest()[:20]
+            item['previous_ids'] = sorted(set(item.get('previous_ids', []) + [previous_id]))
         item['scope'] = sorted(set(item['scope'] + scope))
         item['evidence'].append({'entry_id': 'source-entry-' + str(index + 1),
                                  'source': entry['source'], 'native_name': entry['name'],
@@ -436,7 +443,7 @@ def build(inventory, registry):
                 item['native_evidence'] = sorted({p for f in artifact_fields for p in f.get('evidence', [])})
                 item['limitations'] = sorted({f['limitation'] for f in artifact_fields})
                 continue
-            lookup = setting_lookup_name(item)
+            lookup = item['native']
             declaration = setting_declaration(registry[item['vendor']], lookup) if item['context'] == 'settings' else None
             if declaration:
                 if declaration['path'] != lookup:
