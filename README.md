@@ -8,6 +8,33 @@ second source of truth.
 No adapter is conformance-supported yet. `capabilities` reports the same
 conservative claims as the public compatibility registry.
 
+## Experimental development preset
+
+Use `agents init --preset development --experimental` in a project without an
+existing `.agents` tree. Edit `.agents/permissions/development.json` to select
+`allow`, `ask`, or `deny` for project work, local commits, external changes,
+and destructive work. The defaults allow project work and local commits and
+ask before external or destructive changes. `protected_paths` lists exact
+project-relative files or directories to protect.
+
+The default enforcement mode is practical. Edit
+.agents/guardrails/development.md for agent instructions. Plan and apply
+report which controls are native settings and which are guidance. Codex
+receives a workspace permission profile with command network disabled;
+Copilot receives instructions and retains its native permission settings.
+Neither projection guarantees operation-level approvals inside scripts.
+
+Use agents plan --preset development --experimental --vendor codex, then
+agents apply with the same flags. This explicit scope preserves other profiles
+and requirements. Full repository apply still checks every selected profile.
+Legacy project sandbox settings need --force --backup for the initial scoped
+migration. Use ordinary plan/apply without --preset for Copilot guidance.
+Reload the native session. Add --adopt to init to migrate an
+existing tree without security profiles; changed canonical files are backed
+up. Select --enforcement strict at init to retain the strict contract, whose
+activation remains refused. See the program guide at docs/DEVELOPMENT_PRESET.md
+for configuration, ownership, removal, and native limits.
+
 ## Portable repository
 
 ```text

@@ -31,10 +31,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "init":
 		flags := flag.NewFlagSet("init", flag.ContinueOnError)
 		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
-		experimental := flags.Bool("experimental", false, "enable the draft.2 global configuration contract")
+		experimental := flags.Bool("experimental", false, "enable experimental global configuration or the development preset")
 		flags.SetOutput(stderr)
 		root := flags.String("root", ".", "repository root")
 		force := flags.Bool("force", false, "replace the generated starter files")
+		preset := flags.String("preset", "", "starter preset: development (requires --experimental)")
+		adopt := flags.Bool("adopt", false, "add the development preset to an existing tree; back up its manifest")
+		enforcement := flags.String("enforcement", "practical", "development preset: practical or strict")
 		if err := flags.Parse(args[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
@@ -43,6 +46,39 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		if flags.NArg() != 0 {
 			return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+		}
+		if *preset != "" {
+			if *preset != "development" {
+				return fmt.Errorf("unknown preset %q", *preset)
+			}
+			if !*experimental || *global || *force {
+				return errors.New("development init requires --experimental and does not accept --global or --force")
+			}
+			initialize := config.InitDevelopment
+			if *adopt {
+				initialize = config.AdoptDevelopment
+			}
+			if *enforcement == "practical" {
+				initialize = config.InitPracticalDevelopment
+				if *adopt {
+					initialize = config.AdoptPracticalDevelopment
+				}
+			} else if *enforcement != "strict" {
+				return errors.New("enforcement must be practical or strict")
+			}
+			if err := initialize(*root); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(stdout, "Created the development preset. Edit .agents/permissions/development.json.\nNative settings are not active. For Codex, run agents plan --preset development --experimental --vendor codex. For other vendors, run agents plan --experimental --vendor <vendor>. Inspect native settings and guidance limits, then apply with the same flags.")
+			return err
+		}
+		if *adopt {
+			return errors.New("init --adopt requires --preset development --experimental")
+		}
+		enforcementSet := false
+		flags.Visit(func(f *flag.Flag) { enforcementSet = enforcementSet || f.Name == "enforcement" })
+		if enforcementSet {
+			return errors.New("init --enforcement requires --preset development --experimental")
 		}
 		if err := resolveGlobalRoot(flags, *global, *experimental, root, nil); err != nil {
 			return err
@@ -54,7 +90,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return config.InitGlobal(*root)
 		}
 		if *experimental {
-			return errors.New("experimental init requires --global")
+			return errors.New("experimental init requires --global or --preset development")
 		}
 		return config.Init(*root, *force)
 	case "validate":
@@ -208,6 +244,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "plan", "apply":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		preset := flags.String("preset", "", "project only this preset: development (Codex)")
 		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
 		scope := flags.String("scope", "", "projection scope: project (default) or user")
 		nativeHome := flags.String("native-home", "", "absolute native home; required for user scope")
@@ -236,7 +273,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if *format != "text" && *format != "json" {
 			return fmt.Errorf("unsupported format %q", *format)
 		}
-		options := config.ApplyOptions{Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
+		if *preset != "" && *preset != "development" {
+			return errors.New("unknown projection preset")
+		}
+		options := config.ApplyOptions{DevelopmentOnly: *preset == "development", Adopt: *adopt, Force: *force, Backup: *backup, Experimental: *experimental, CodexHome: *codexHome, Scope: *scope, NativeHome: *nativeHome}
 		if err := resolveGlobalRoot(flags, *global, *experimental, root, scope); err != nil {
 			return err
 		}
@@ -291,17 +331,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   agents init [--root <directory>] [--force]
+  agents init --preset development --experimental [--enforcement practical|strict] [--adopt] [--root <directory>]
   agents validate [--experimental] [--root <directory>] [--format text|json]
   agents capabilities [--experimental] --vendor <copilot|codex|claude>
   agents version
   agents import [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--force] [--backup]
-  agents plan [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--codex-home <directory>]
-  agents apply [--experimental] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup] [--codex-home <directory>]
+  agents plan [--experimental] [--preset development] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup] [--codex-home <directory>]
+  agents apply [--experimental] [--preset development] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup] [--codex-home <directory>]
   agents sync [--experimental] --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup] [--codex-home <directory>]
 
 The 1.1 draft requires --experimental. The Codex Linux direct sandbox subset
-also requires --codex-home and existing native trust. Other security requests
-and native security import are refused. No runtime launcher or trust grant is
+also requires --codex-home and existing native trust. The practical development
+preset separates native boundaries from agent guidance. Its explicit plan/apply
+scope currently requires project-scoped Codex. Other security requests and
+native security import are refused. No runtime launcher or trust grant is
 installed. Use --format json to inspect policy, invocation, and authority limits.
 
 Use --global --experimental with init, validate, import, plan, apply, or sync
@@ -322,6 +365,12 @@ adopted or an explicit forced backup is requested.
 func writePlan(stdout io.Writer, result config.PlanResult, format string) error {
 	if format == "json" {
 		return json.NewEncoder(stdout).Encode(result)
+	}
+	if result.Security != nil && result.Security.Declared.Development != nil {
+		p := result.Security.Declared.Development
+		if _, err := fmt.Fprintf(stdout, "Development policy (requested; status: %s)\n  Project edits, tests, builds, formatting: %s\n  Local commits: %s\n  Push, publish, deploy, other external changes: %s\n  Destructive work: %s\n  Protected paths: %v\n", result.Security.Status, p.ProjectWork, p.LocalCommits, p.ExternalChanges, p.DestructiveWork, p.ProtectedPaths); err != nil {
+			return err
+		}
 	}
 	for _, warning := range result.Warnings {
 		if _, err := fmt.Fprintf(stdout, "warning\t%s\n", warning); err != nil {

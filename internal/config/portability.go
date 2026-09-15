@@ -105,7 +105,7 @@ func requiredCapabilityDiagnostics(vendor, source string) ([]string, error) {
 
 func requiredCapabilityDiagnosticsForSecurity(vendor, root string, security *SecurityPlan) ([]string, error) {
 	diagnostics, err := requiredCapabilityDiagnostics(vendor, root)
-	if err != nil || security == nil || security.Status != "native-subset" {
+	if err != nil || security == nil || (security.Status != "native-subset" && security.Status != "practical") {
 		return diagnostics, err
 	}
 	result := []string{}

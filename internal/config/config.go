@@ -461,8 +461,10 @@ func ExportWithOptions(vendor, source, output string, options WriteOptions) erro
 	if profiles["native"] || profiles["plugins"] {
 		return errors.New("native and plugin selection profiles require repository plan/apply; legacy export cannot preserve them")
 	}
-	if _, diagnostics, err := securityPreflight(vendor, source, profiles); err != nil {
+	if security, diagnostics, err := securityPreflight(vendor, source, profiles); err != nil {
 		return err
+	} else if security != nil && security.Declared.Development != nil {
+		return errors.New("development preset requires repository plan/apply; export cannot preserve its native settings and guidance")
 	} else if len(diagnostics) > 0 {
 		return errors.New(strings.Join(diagnostics, "; "))
 	}

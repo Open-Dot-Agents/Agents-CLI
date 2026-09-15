@@ -73,6 +73,7 @@ type SandboxPolicy struct {
 }
 
 type SecurityPolicy struct {
+	Development *DevelopmentPolicy `json:"development,omitempty"`
 	Permissions *PermissionsPolicy `json:"permissions,omitempty"`
 	Sandbox     *SandboxPolicy     `json:"sandbox,omitempty"`
 }
@@ -240,6 +241,11 @@ func readSecurityPolicy(root string, selected map[string]bool) (SecurityPolicy, 
 			}
 		}
 		policy.Permissions = p
+		development, err := readDevelopmentPolicy(root, p)
+		if err != nil {
+			return policy, err
+		}
+		policy.Development = development
 	}
 	if selected["sandbox"] {
 		p := new(SandboxPolicy)
@@ -413,6 +419,23 @@ func securityPreflight(vendor, root string, selected map[string]bool) (*Security
 		return nil, nil, nil
 	}
 	plan := &SecurityPlan{StandardVersion: ExperimentalVersion, Status: "refused", Declared: policy, Normalized: normalizeSecurityPolicy(policy), ProjectedSettings: map[string]any{}, AutomaticGrants: []string{}, EvidenceScope: "policy validation and adapter refusal only; native enforcement is not verified"}
+	if policy.Development != nil {
+		if policy.Development.Enforcement == "practical" && (vendor == "codex" || vendor == "copilot") {
+			if policy.Sandbox != nil || len(policy.Permissions.Extensions) != 1 {
+				return plan, []string{"practical development cannot replace another selected security policy or extension"}, nil
+			}
+			plan.Status = "practical"
+			plan.EvidenceScope = "Configuration and instruction projection; native session authority applies. Operation decisions are agent guidance, not guaranteed enforcement."
+			plan.UnresolvedControls = []string{"operation-level approvals inside scripts and tools depend on agent compliance", "MCP, hooks, apps, browser, and delegation use their own native authority", "credential isolation and effective host policy are not attested"}
+			return plan, nil, nil
+		}
+		plan.UnresolvedControls = []string{
+			"automatic project edits, tests, builds, formatting, and local commits require a verified native development mapping",
+			"push, publish, deployment, and other external changes require approval across all execution routes",
+			"protected paths, host security, destructive operations, and configuration precedence require native enforcement tests",
+		}
+		return plan, []string{"ODA-DEVELOPMENT-0001: development policy is valid, but native enforcement is not verified for " + vendor + "; no files will be changed"}, nil
+	}
 	plan.UnresolvedControls = []string{
 		"native version and host prerequisites have no verified security adapter range",
 		"effective user, project, command-line, environment, and administrator authority is not attested",

@@ -10,6 +10,10 @@ func nativePolicyField(vendor string, path []string) bool {
 		return false
 	}
 	if vendor == "codex" {
+		// Profile names and filesystem paths are identifiers, not credentials.
+		if path[0] == "permissions" && (len(path) == 2 || len(path) >= 4 && path[2] == "filesystem") {
+			return false
+		}
 		if len(path) == 3 && path[0] == "mcp_servers" && path[2] == "tools" {
 			return false
 		}

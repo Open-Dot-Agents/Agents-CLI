@@ -94,7 +94,7 @@ type nativeBuild struct {
 
 func useNativeProjection(root string, options ApplyOptions) bool {
 	var m manifestDocument
-	return options.Scope == "user" || options.NativeHome != "" || (nativeDecodePolicy(filepath.Join(root, ".agents", "manifest.json"), &m) == nil && m.Version == NativeVersion)
+	return options.DevelopmentOnly || options.Scope == "user" || options.NativeHome != "" || (nativeDecodePolicy(filepath.Join(root, ".agents", "manifest.json"), &m) == nil && m.Version == NativeVersion)
 }
 func validateNativeScope(scope, home string, experimental bool) error {
 	if scope != "" && scope != "project" && scope != "user" {
@@ -543,6 +543,9 @@ func prepareNativeProjection(vendor, root string, options ApplyOptions) (prepare
 }
 func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBuild, error) {
 	var b nativeBuild
+	if options.DevelopmentOnly && (vendor != "codex" || options.Scope == "user") {
+		return b, fmt.Errorf("development-only projection currently requires project-scoped Codex")
+	}
 	if err := validateNativeScope(options.Scope, options.NativeHome, options.Experimental); err != nil {
 		return b, err
 	}
@@ -573,17 +576,50 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 	if m.Version != NativeVersion {
 		return b, fmt.Errorf("native projection requires %s", NativeVersion)
 	}
+	var development *SecurityPlan
+	if nativeHasProfile(m.Profiles, "permissions") {
+		selected := map[string]bool{}
+		for _, profile := range m.Profiles {
+			selected[profile] = true
+		}
+		security, diagnostics, err := securityPreflight(vendor, root, selected)
+		if err != nil {
+			return b, err
+		}
+		if security != nil && security.Declared.Development != nil {
+			security.StandardVersion = NativeVersion
+			if security.Status != "practical" || len(diagnostics) != 0 {
+				b.plan = PlanResult{SchemaVersion: NativeVersion, Vendor: vendor, Root: filepath.Dir(root), Applicable: false, Actions: []Action{}, Security: security, Diagnostics: diagnostics}
+				return b, nil
+			}
+			if options.Scope == "user" {
+				return b, fmt.Errorf("practical development is project-scoped")
+			}
+			development = security
+		}
+	}
 	globalSource, err := nativeGlobalSource(vendor, root, options.Scope)
 	if err != nil {
 		return b, err
 	}
-	if diagnostics, e := requiredCapabilityDiagnostics(vendor, root); e != nil {
-		return b, e
-	} else if len(diagnostics) > 0 {
-		return b, fmt.Errorf("%s", strings.Join(diagnostics, "; "))
+	if !options.DevelopmentOnly {
+		if diagnostics, e := requiredCapabilityDiagnosticsForSecurity(vendor, root, development); e != nil {
+			return b, e
+		} else if len(diagnostics) > 0 {
+			return b, fmt.Errorf("%s", strings.Join(diagnostics, "; "))
+		}
+	}
+	if options.DevelopmentOnly {
+		if development == nil && (nativeHasProfile(m.Profiles, "permissions") || nativeHasProfile(m.Profiles, "sandbox")) {
+			return b, fmt.Errorf("development-only projection cannot bypass another selected security policy")
+		}
+		m.Profiles = nil
+		if development != nil {
+			m.Profiles = []string{"permissions"}
+		}
 	}
 	userHome, _ := os.UserHomeDir()
-	if options.Scope != "user" || root == filepath.Join(userHome, ".agents") {
+	if !options.DevelopmentOnly && (options.Scope != "user" || root == filepath.Join(userHome, ".agents")) {
 		selected := map[string]bool{}
 		for _, profile := range m.Profiles {
 			selected[profile] = true
@@ -630,6 +666,13 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		return b, err
 	}
 	b.plan = PlanResult{SchemaVersion: NativeVersion, Vendor: vendor, Root: filepath.Dir(root), Actions: []Action{}, Native: &NativePlan{StandardVersion: NativeVersion, Platforms: []string{"linux"}, Scope: scope, NativeHome: home, Versions: []string{nativePinnedVersion(vendor)}, Features: []NativeFeature{}, RequiredActions: []string{"Use the pinned native CLI version.", "Reload native configuration. Login, plugin installation, scheduling, and execution are separate native operations."}}}
+	b.plan.Security = development
+	if options.DevelopmentOnly {
+		b.plan.Warnings = append(b.plan.Warnings, "Only the development preset is projected. Other profiles and required capabilities are unchanged and are not verified by this operation.")
+		if options.Force && options.Backup && development != nil {
+			b.plan.Warnings = append(b.plan.Warnings, "Legacy project sandbox keys and conflicting unowned development settings will be migrated with a file backup.")
+		}
+	}
 	if globalSource != "" {
 		b.plan.Native.GlobalSource = globalSource
 		b.plan.Native.RequiredActions = append(b.plan.Native.RequiredActions, "Apply global defaults separately with --global and an explicit native home. Project values override user defaults according to native field precedence; instruction bodies can accumulate. This project operation does not write or verify user projection state.")
@@ -682,8 +725,13 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 	}
 	security := nativeHasProfile(m.Profiles, "permissions") || nativeHasProfile(m.Profiles, "sandbox")
 	// A new projection path must not bypass portable mandatory policy.
-	if security {
+	if security && development == nil {
 		return b, fmt.Errorf("native profiles cannot replace portable security enforcement; combined draft.2 security projection is not verified")
+	}
+	if development != nil {
+		if err = addPracticalDevelopment(vendor, root, base, development, &b.plan, options.DevelopmentOnly && options.Force && options.Backup, add); err != nil {
+			return b, err
+		}
 	}
 	for _, directory := range []string{"native", "plugins"} {
 		if !nativeHasProfile(m.Profiles, directory) {
@@ -1012,7 +1060,7 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 	}
 	// Portable instructions map to the same target registry. This detects a
 	// duplicate native artifact before a write.
-	if scope == "project" {
+	if scope == "project" && !options.DevelopmentOnly {
 		src := filepath.Join(root, "AGENTS.md")
 		data, e := nativeReadFile(src)
 		if e != nil {
@@ -1033,7 +1081,19 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 			return b, statErr
 		}
-		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		compatibilityReference := false
+		if statErr == nil && info.Mode().IsRegular() {
+			rootData, readErr := nativeReadFile(link)
+			if readErr != nil {
+				return b, readErr
+			}
+			compatibilityReference = developmentRootReference(data, rootData)
+		}
+		if vendor == "codex" && compatibilityReference && targets[path] == nil {
+			b.plan.Native.Features = append(b.plan.Native.Features, NativeFeature{Feature: "instructions:canonical-reference",
+				Source: src, Destination: link, Scope: scope, Disposition: "portable-mapping",
+				Activation: "existing compatibility instructions", Ownership: "not owned by native projection"})
+		} else if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			if e = validateInstructionFile(link, src); e != nil {
 				return b, e
 			}
@@ -1072,12 +1132,19 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 				if err != nil {
 					return b, err
 				}
-				if !bytes.Equal(rootData, data) {
+				if !bytes.Equal(rootData, data) && !compatibilityReference {
 					return b, fmt.Errorf("native projection refuses distinct project instructions in root AGENTS.md and canonical AGENTS.md")
 				}
 				if bytes.Contains(rootData, []byte("@")) {
 					return b, fmt.Errorf("Copilot root AGENTS.md contains a potential file reference; projection cannot preserve its reference base at .github/copilot-instructions.md")
 				}
+			}
+			if development != nil && vendor == "copilot" {
+				guidance, err := developmentInstructions(root, development.Declared.Development)
+				if err != nil {
+					return b, err
+				}
+				data = append(data, []byte("\n\n"+guidance)...)
 			}
 			if e = add(path, format, "", data, src, true); e != nil {
 				return b, e
@@ -1213,6 +1280,9 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 		if owned.Source != root {
 			continue
 		}
+		if options.DevelopmentOnly && !developmentNativeKey(base, k[0], k[1]) {
+			continue
+		}
 		rel, e := filepath.Rel(base, k[0])
 		if e != nil || !safeNativeRelative(rel) {
 			return b, fmt.Errorf("ownership target escapes native scope")
@@ -1292,7 +1362,17 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 			var k []string
 			_ = json.Unmarshal([]byte(encoded), &k)
 			if len(k) == 2 && k[0] == path && owned.Source == root {
+				if options.DevelopmentOnly && !developmentNativeKey(base, k[0], k[1]) {
+					continue
+				}
 				keys[k[1]] = true
+			}
+		}
+		if options.DevelopmentOnly && development != nil && options.Force && options.Backup {
+			for key := range values {
+				if developmentLegacyKey(key) {
+					keys[key] = true
+				}
 			}
 		}
 		for key := range keys {
@@ -1332,7 +1412,8 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 				} else {
 					desiredValue = t.settings[key]
 				}
-				if !options.Adopt || !desired || nativeHash(current) != nativeHash(desiredValue) {
+				migrate := options.DevelopmentOnly && development != nil && options.Force && options.Backup && developmentNativeKey(base, path, key)
+				if !migrate && (!options.Adopt || !desired || nativeHash(current) != nativeHash(desiredValue)) {
 					conflict = "setting has no ownership record"
 				}
 			}

@@ -33,6 +33,9 @@ const securityProfileEnd = "# Open-Dot-Agents security profile end\n"
 func securityError(message string) error { return errors.New("ODA-SECURITY-0006: " + message) }
 
 func codexPolicySettings(policy SecurityPolicy, selected map[string]bool) (map[string]any, error) {
+	if policy.Development != nil {
+		return nil, securityError("the development preset requires interactive approval enforcement; the direct-shell subset cannot activate it")
+	}
 	p := policy.Sandbox
 	if p == nil {
 		return nil, securityError("the Codex mapping requires a sandbox profile")

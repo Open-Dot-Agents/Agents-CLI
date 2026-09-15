@@ -20,13 +20,14 @@ const ownershipVersion = "1.0.0"
 
 // ApplyOptions controls conflict adoption and backups for an adapter projection.
 type ApplyOptions struct {
-	Scope        string
-	NativeHome   string
-	Experimental bool
-	CodexHome    string
-	Adopt        bool
-	Force        bool
-	Backup       bool
+	DevelopmentOnly bool
+	Scope           string
+	NativeHome      string
+	Experimental    bool
+	CodexHome       string
+	Adopt           bool
+	Force           bool
+	Backup          bool
 }
 
 // Action is one planned managed-file operation.
