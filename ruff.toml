@@ -1,0 +1,7 @@
+# Minimal, low-noise Python lint configuration. Catches real bugs (syntax
+# errors, unused imports/variables, undefined names) without imposing a
+# broader style ruleset. See docs/CHANGELOG.md for adoption context.
+target-version = "py314"
+
+[lint]
+select = ["E9", "F"]
