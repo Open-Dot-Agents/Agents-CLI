@@ -1116,6 +1116,21 @@ func buildNativeProjection(vendor, root string, options ApplyOptions) (nativeBui
 			b.plan.Native.Features = append(b.plan.Native.Features, NativeFeature{Feature: "instructions:canonical-link", Source: src,
 				Destination: link, Scope: scope, Disposition: "portable-mapping", Activation: "existing canonical compatibility link",
 				Ownership: "not owned by native projection", Authority: "verified link to this project's canonical instructions"})
+			if development != nil && vendor == "copilot" {
+				guidance, err := developmentInstructions(root, development.Declared.Development)
+				if err != nil {
+					return b, err
+				}
+				// The link already exposes the core. Keep it unchanged and emit
+				// the selected decisions in the normal Copilot instruction file.
+				guidancePath, guidanceFormat, err := nativeTargetPath(vendor, scope, base, nativeArtifact{Kind: "instructions"})
+				if err != nil {
+					return b, err
+				}
+				if err := add(guidancePath, guidanceFormat, "", []byte(guidance), filepath.Join(root, developmentGuardrailsPath), true); err != nil {
+					return b, fmt.Errorf("Copilot development guidance for canonical instructions: %w", err)
+				}
+			}
 		} else {
 			rootOwner, rootOwned := state.Settings[nativeKey(link, "")]
 			if vendor == "copilot" && path != link && statErr == nil && targets[link] == nil && rootOwned && rootOwner.Source == root && bytes.Contains(data, []byte("@")) {

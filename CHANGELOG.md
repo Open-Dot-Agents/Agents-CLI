@@ -4,6 +4,10 @@ All notable changes to the reference CLI are documented here.
 
 ## Unreleased
 
+- Preserve practical development guidance when Copilot uses a canonical
+  `AGENTS.md` link. Manage the guidance in the Copilot instruction file so
+  policy updates and removal keep the canonical link unchanged.
+
 - Add experimental global configuration with explicit user destinations and
   fixed core instruction bindings. Preserve complete user skill packages,
   private backups, and inherited skill ownership. Validate Codex keybindings

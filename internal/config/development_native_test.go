@@ -115,6 +115,57 @@ func TestPracticalDevelopmentAdoption(t *testing.T) {
 	}
 }
 
+func TestPracticalCopilotCanonicalLinkGuidance(t *testing.T) {
+	root := practicalFixture(t)
+	link := filepath.Join(root, "AGENTS.md")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".agents/AGENTS.md", link); err != nil {
+		t.Fatal(err)
+	}
+	core := readNativeTest(t, filepath.Join(root, ".agents/AGENTS.md"))
+	options := ApplyOptions{Experimental: true}
+	if _, err := ApplyProjection("copilot", root, options); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, ".github/copilot-instructions.md")
+	if text := readNativeTest(t, target); !strings.Contains(text, "Local commits: allow") || !strings.Contains(text, "Development guardrails") {
+		t.Fatal("canonical link lost development guidance", text)
+	}
+	plan, err := PlanProjection("copilot", root, options)
+	if err != nil || len(plan.Actions) != 0 {
+		t.Fatal("repeat apply", plan, err)
+	}
+	path := filepath.Join(root, ".agents", developmentPath)
+	var policy DevelopmentPolicy
+	if err := decodePolicy(path, &policy); err != nil {
+		t.Fatal(err)
+	}
+	policy.LocalCommits = "deny"
+	data, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, path, string(data))
+	if _, err := ApplyProjection("copilot", root, options); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readNativeTest(t, target), "Local commits: deny") {
+		t.Fatal("updated guidance was lost")
+	}
+	writeFixture(t, filepath.Join(root, ".agents/manifest.json"), `{"version":"1.1.0-draft.2","profiles":[],"requires":[]}`)
+	if _, err := ApplyProjection("copilot", root, options); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatal("removed policy left guidance", err)
+	}
+	if value, err := os.Readlink(link); err != nil || value != ".agents/AGENTS.md" || readNativeTest(t, link) != core {
+		t.Fatal("development projection changed canonical instructions", err)
+	}
+}
+
 func TestPracticalDevelopmentRollbackAndGuidance(t *testing.T) {
 	for _, vendor := range []string{"codex", "copilot"} {
 		t.Run(vendor, func(t *testing.T) {
@@ -315,5 +366,73 @@ func TestDevelopmentOnlyUsesTheTestedNativeSettings(t *testing.T) {
 	}
 	if configurations[0] != configurations[1] {
 		t.Fatal("scoped apply changed native settings or guidance")
+	}
+}
+
+// TestDevelopmentRollbackEvidence prepares a restored fixture for a subsequent
+// native session. Normal test runs do not use an external fixture directory.
+func TestDevelopmentRollbackEvidence(t *testing.T) {
+	root := os.Getenv("AGENTS_DEVELOPMENT_ROLLBACK_ROOT")
+	if root == "" {
+		t.Skip("native workflow fixture was not requested")
+	}
+	vendor := os.Getenv("AGENTS_DEVELOPMENT_ROLLBACK_VENDOR")
+	output := os.Getenv("AGENTS_DEVELOPMENT_ROLLBACK_RESULT")
+	if !filepath.IsAbs(root) || !filepath.IsAbs(output) || filepath.Dir(output) != filepath.Dir(root) || (vendor != "codex" && vendor != "copilot") {
+		t.Fatal("invalid disposable rollback fixture")
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".agents")); !os.IsNotExist(err) {
+		t.Fatal("rollback fixture already has canonical configuration")
+	}
+	if _, err := os.Lstat(output); !os.IsNotExist(err) {
+		t.Fatal("rollback result already exists")
+	}
+	marker, err := os.ReadFile(filepath.Join(root, ".agents-development-fixture"))
+	if err != nil || string(marker) != "disposable native workflow\n" {
+		t.Fatal("rollback directory is not a disposable workflow fixture")
+	}
+	if err := InitPracticalDevelopment(root); err != nil {
+		t.Fatal(err)
+	}
+	options := ApplyOptions{Experimental: true, DevelopmentOnly: vendor == "codex"}
+	if _, err := ApplyProjection(vendor, root, options); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".agents", developmentPath)
+	var policy DevelopmentPolicy
+	if err := decodePolicy(path, &policy); err != nil {
+		t.Fatal(err)
+	}
+	policy.LocalCommits = "deny"
+	data, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	build, err := buildNativeProjection(vendor, root, options)
+	if err != nil || !build.plan.Applicable || len(build.changes) == 0 {
+		t.Fatal(build.plan, err)
+	}
+	before := instructionSnapshot(t, root)
+	injected := false
+	err = nativeRunTransaction(build.changes, func(stage string, index int) error {
+		if stage == "after-write" && index == len(build.changes)-1 {
+			injected = true
+			return fmt.Errorf("development fixture rollback injection")
+		}
+		return nil
+	})
+	after := instructionSnapshot(t, root)
+	if err == nil || !injected || nativeHash(before) != nativeHash(after) {
+		t.Fatal("rollback did not restore the disposable fixture", err)
+	}
+	data, err = json.Marshal(map[string]any{"injected": injected, "before": before, "after": after})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, data, 0600); err != nil {
+		t.Fatal(err)
 	}
 }
