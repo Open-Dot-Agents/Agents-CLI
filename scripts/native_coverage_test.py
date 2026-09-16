@@ -2,7 +2,6 @@
 """Check semantic context and frozen source coverage."""
 import collections
 import copy
-import hashlib
 import json
 import unittest
 from native_coverage import ROOT, INVENTORY, build, classify, compiled_registry, setting_declaration
