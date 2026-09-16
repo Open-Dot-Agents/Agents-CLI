@@ -376,8 +376,8 @@ class NativeCoverageTest(unittest.TestCase):
 
     def test_frontmatter_does_not_reuse_root_setting_validator(self):
         feature = self.feature('copilot', 'agent-frontmatter', 'model')
-        self.assertEqual(feature['disposition'], 'validator-declared')
-        self.assertEqual(feature['native_status'], 'unverified')
+        self.assertEqual(feature['disposition'], 'artifact-field-mapping')
+        self.assertEqual(feature['native_status'], 'bounded-fixture-execution')
         self.assertTrue(feature['validation_source'].endswith('native_copilot_agent.go'))
         self.assertNotEqual(feature['id'], self.feature('copilot', 'settings', 'model')['id'])
 
