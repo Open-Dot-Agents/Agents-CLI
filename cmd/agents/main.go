@@ -28,6 +28,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
 	case "init":
 		flags := flag.NewFlagSet("init", flag.ContinueOnError)
 		global := flags.Bool("global", false, "use ~/.agents as the canonical user configuration")
@@ -330,6 +332,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
+  agents doctor --experimental --vendor <codex|copilot> [--root <directory>] [--format text|json]
   agents init [--root <directory>] [--force]
   agents init --preset development --experimental [--enforcement practical|strict] [--adopt] [--root <directory>]
   agents validate [--experimental] [--root <directory>] [--format text|json]
@@ -339,6 +342,10 @@ func printUsage(w io.Writer) {
   agents plan [--experimental] [--preset development] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup] [--codex-home <directory>]
   agents apply [--experimental] [--preset development] --vendor <copilot|codex|claude> [--root <directory>] [--format text|json] [--adopt|--force] [--backup] [--codex-home <directory>]
   agents sync [--experimental] --vendor <all|copilot|codex|claude> [--root <directory>] [--format text|json] [--check] [--adopt|--force] [--backup] [--codex-home <directory>]
+
+Doctor only inspects configuration and process mounts. It does not run native
+executables, change files, or verify active session permissions. Exit 1 means
+that a finding needs action; unknown runtime authority alone does not fail.
 
 The 1.1 draft requires --experimental. The Codex Linux direct sandbox subset
 also requires --codex-home and existing native trust. The practical development

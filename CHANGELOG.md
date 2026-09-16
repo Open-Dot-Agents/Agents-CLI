@@ -4,6 +4,11 @@ All notable changes to the reference CLI are documented here.
 
 ## Unreleased
 
+- Add read-only `doctor --experimental --vendor codex|copilot` for development
+  policy, projection, ownership, executable availability, and Linux mount
+  diagnosis. Separate disk configuration from unknown session permissions.
+  Preserve project files and user settings; never launch native executables.
+
 - Preserve practical development guidance when Copilot uses a canonical
   `AGENTS.md` link. Manage the guidance in the Copilot instruction file so
   policy updates and removal keep the canonical link unchanged.

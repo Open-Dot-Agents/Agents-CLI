@@ -35,6 +35,34 @@ up. Select --enforcement strict at init to retain the strict contract, whose
 activation remains refused. See the program guide at docs/DEVELOPMENT_PRESET.md
 for configuration, ownership, removal, and native limits.
 
+## Read-only development diagnosis
+
+```sh
+agents doctor --experimental --vendor codex
+agents doctor --experimental --vendor copilot --root /path/to/project --format json
+```
+
+Doctor inspects the requested development policy, guardrails, managed files,
+and ownership. Codex uses the development-only plan. Copilot uses the full
+project plan, including selected profiles and required capabilities. The
+command does not apply changes, start a native process, or inspect account
+credentials. It finds the executable through `CODEX_BIN` or `COPILOT_BIN`,
+then `PATH` if the variable is unset. It does not verify the installed version.
+
+The report separates requested policy, disk configuration, current-process
+mount restrictions, and unknown active session authority. On Linux it checks
+workspace and Git metadata mounts, including submodules and linked worktrees.
+No read-only mount detected does not mean commits are permitted. Matching
+files do not prove that a native session loaded them.
+
+Exit `0` means no configuration action or blocking mount restriction was found.
+Exit `1` means a finding needs action or inspection failed. Unknown runtime
+permissions alone do not cause failure. JSON uses `schema_version: "1.0.0"`,
+`configuration_state`, `ready`, and checks with `id`, `layer`, `status`,
+`message`, affected `paths`, and suggested command argument arrays. Check
+statuses are `ok`, `action-required`, and `unknown`. See the development setup
+guide for the state table and next steps. Doctor never executes those steps.
+
 ## Portable repository
 
 ```text
