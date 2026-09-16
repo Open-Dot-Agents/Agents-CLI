@@ -150,7 +150,7 @@ var vendorCompatibility = map[string]compatibilitySummary{
 	"copilot": {
 		Name:           "Reference CLI: Copilot",
 		Harness:        "GitHub Copilot CLI",
-		HarnessVersion: "1.0.83",
+		HarnessVersion: "1.0.84-9",
 		Status:         "not-conformance-supported",
 		ProfileStatus: map[string]string{
 			"tools":  "cli-projection-only",

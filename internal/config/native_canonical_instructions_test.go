@@ -81,7 +81,7 @@ func TestNativeCanonicalInstructionBindingValidation(t *testing.T) {
 		repo := canonicalInstructionImportFixture(t)
 		dir := filepath.Join(repo, ".agents/native/com.github.copilot")
 		writeFixture(t, filepath.Join(repo, ".agents/manifest.json"), `{"version":"1.1.0-draft.2","profiles":["native"]}`)
-		p := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: "project", Required: true,
+		p := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: "project", Required: true,
 			Artifacts: []nativeArtifact{{Kind: "canonical-instructions", Source: source}}}
 		data, err := json.Marshal(p)
 		if err != nil {
@@ -329,7 +329,7 @@ func TestNativeCanonicalInstructionLinkOwnership(t *testing.T) {
 func TestNativeCanonicalInstructionEmptyNameRefused(t *testing.T) {
 	repo := canonicalInstructionImportFixture(t)
 	writeFixture(t, filepath.Join(repo, ".agents/manifest.json"), `{"version":"1.1.0-draft.2","profiles":["native"]}`)
-	writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.83","scope":"project","required":true,"artifacts":[{"kind":"canonical-instructions","source":"AGENTS.md","name":""}]}`)
+	writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.84-9","scope":"project","required":true,"artifacts":[{"kind":"canonical-instructions","source":"AGENTS.md","name":""}]}`)
 	before := instructionSnapshot(t, repo)
 	if _, err := ApplyProjection("copilot", repo, ApplyOptions{Experimental: true, Force: true}); err == nil {
 		t.Fatal("empty binding name accepted")

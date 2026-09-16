@@ -14,7 +14,7 @@ func copilotAgentFixture(t *testing.T, scope, name, body string) string {
 	t.Helper()
 	root := nativeLSPFixture(t, scope, `{}`, true)
 	base := filepath.Join(root, ".agents/native/com.github.copilot")
-	data, _ := json.Marshal(nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "agent", Source: "agent.md", Name: name}}})
+	data, _ := json.Marshal(nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "agent", Source: "agent.md", Name: name}}})
 	os.WriteFile(filepath.Join(base, "profile.json"), data, 0600)
 	os.WriteFile(filepath.Join(base, "agent.md"), []byte(body), 0600)
 	return root

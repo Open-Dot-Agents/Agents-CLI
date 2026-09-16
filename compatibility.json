@@ -7,7 +7,7 @@
       "reference_cli_vendor": "copilot",
       "name": "Reference CLI: Copilot",
       "harness": "GitHub Copilot CLI",
-      "harness_version": "1.0.83",
+      "harness_version": "1.0.84-9",
       "status": "not-conformance-supported",
       "profiles": {
         "tools": "cli-projection-only",

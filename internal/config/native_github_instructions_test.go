@@ -64,7 +64,7 @@ func TestNativeCopilotGitHubReferenceLegacyLinkRefusal(t *testing.T) {
 	repo := t.TempDir()
 	writeFixture(t, filepath.Join(repo, ".agents/manifest.json"), `{"version":"1.1.0-draft.2","profiles":["native"]}`)
 	writeFixture(t, filepath.Join(repo, ".agents/AGENTS.md"), "Legacy imported GitHub body.\n@policy.md\n")
-	writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.83","scope":"project","required":false,"artifacts":[]}`)
+	writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.84-9","scope":"project","required":false,"artifacts":[]}`)
 	if err := os.Symlink(".agents/AGENTS.md", filepath.Join(repo, "AGENTS.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestNativeCopilotGitHubReferenceImportRefusals(t *testing.T) {
 					writeFixture(t, filepath.Join(repo, "AGENTS.md"), "Separate root.\n")
 					writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/root.md"), "Separate root.\n")
 				}
-				writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.83","scope":"project","required":false,"artifacts":`+artifacts+`}`)
+				writeFixture(t, filepath.Join(repo, ".agents/native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.84-9","scope":"project","required":false,"artifacts":`+artifacts+`}`)
 			case "invalid-utf8":
 				writeFixture(t, path, "@policy.md\n\xff")
 			case "directory", "symlink":

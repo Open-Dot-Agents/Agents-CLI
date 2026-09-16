@@ -1017,7 +1017,7 @@ func TestVendorCapabilities(t *testing.T) {
 		hooks          string
 		mcpStatus      string
 	}{
-		{vendor: "copilot", harnessVersion: "1.0.83", mcpPath: ".github/mcp.json", hooks: ".github/hooks/open-dot-agents.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
+		{vendor: "copilot", harnessVersion: "1.0.84-9", mcpPath: ".github/mcp.json", hooks: ".github/hooks/open-dot-agents.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
 		{vendor: "codex", harnessVersion: "0.154.0", mcpPath: ".codex/config.toml", hooks: ".codex/hooks.json", skills: ".agents/skills", mcpStatus: "cli-projection-only"},
 		{vendor: "claude", harnessVersion: "2.1.229", mcpPath: ".mcp.json", hooks: ".claude/settings.json", skills: ".claude/skills", mcpStatus: "cli-projection-only"},
 	} {

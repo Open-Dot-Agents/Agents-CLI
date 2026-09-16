@@ -472,7 +472,7 @@ func nativePinnedVersion(vendor string) string {
 	if vendor == "codex" {
 		return "0.154.0"
 	}
-	return "1.0.83"
+	return "1.0.84-9"
 }
 func nativeForbidden(key string) bool {
 	key = strings.ToLower(key)
