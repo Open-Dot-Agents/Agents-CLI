@@ -193,7 +193,7 @@ func nativeCheckCopilotAgentFields(source map[string]any) error {
 func nativeCopilotAgentFeature(feature NativeFeature) NativeFeature {
 	feature.Disposition, feature.Activation = "artifact-mapping", "pending native reload"
 	feature.NativeStatus = "bounded-fixture-execution"
-	feature.Limitation = "Copilot 1.0.83 fixture verifies discovery, instructions, delegation, and an approved child command. The model field override is separately verified; reasoningEffort and other frontmatter controls still need separate evidence. Agent-local MCP has separate discovery, delegation, and parent-isolation fixtures."
+	feature.Limitation = "Copilot 1.0.83 fixture verifies discovery, instructions, delegation, and an approved child command. The model field override is separately verified; reasoningEffort is separately verified as not honored (native limitation). Other frontmatter controls still need separate evidence. Agent-local MCP has separate discovery, delegation, and parent-isolation fixtures."
 	evidence := "WORKBENCH/evidence/native-draft2-debug/copilot-agent-final-user.json"
 	if feature.Scope == "project" {
 		evidence = "WORKBENCH/evidence/native-draft2-debug/copilot-agent-final-project.json"
@@ -225,6 +225,11 @@ func nativeCopilotAgentFields(feature NativeFeature) []NativeFeature {
 			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
 			field.Limitation = "Fixture verifies that a delegated child turn uses the agent's own model field instead of inheriting the parent session's model. Fallback when the declared model is unavailable, the models/modelPolicy fields, and Auto-session inheritance need separate evidence."
 			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-agent-model-override-" + feature.Scope + ".json"}
+		}
+		if name == "reasoningEffort" {
+			field.Disposition, field.NativeStatus = "native-limitation", "bounded-reasoning-effort-ignored"
+			field.Limitation = "Fixture proves the declared value is not honored: with a harness-recognized reasoning model (gpt-5) and reasoningEffort: high, the delegated child turn transmits a fixed reasoning_effort of 'medium' regardless of the declared value or its absence. Other harness-recognized models and higher-precedence overrides need separate evidence."
+			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-agent-reasoning-effort-" + feature.Scope + ".json"}
 		}
 		if name == "mcp-servers" {
 			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
