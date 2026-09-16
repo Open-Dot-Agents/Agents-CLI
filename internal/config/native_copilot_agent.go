@@ -193,7 +193,7 @@ func nativeCheckCopilotAgentFields(source map[string]any) error {
 func nativeCopilotAgentFeature(feature NativeFeature) NativeFeature {
 	feature.Disposition, feature.Activation = "artifact-mapping", "pending native reload"
 	feature.NativeStatus = "bounded-fixture-execution"
-	feature.Limitation = "Copilot 1.0.83 fixture verifies discovery, instructions, delegation, and an approved child command. Model and reasoning overrides and other frontmatter controls need separate evidence. Agent-local MCP has separate discovery, delegation, and parent-isolation fixtures."
+	feature.Limitation = "Copilot 1.0.83 fixture verifies discovery, instructions, delegation, and an approved child command. The model field override is separately verified; reasoningEffort and other frontmatter controls still need separate evidence. Agent-local MCP has separate discovery, delegation, and parent-isolation fixtures."
 	evidence := "WORKBENCH/evidence/native-draft2-debug/copilot-agent-final-user.json"
 	if feature.Scope == "project" {
 		evidence = "WORKBENCH/evidence/native-draft2-debug/copilot-agent-final-project.json"
@@ -220,6 +220,11 @@ func nativeCopilotAgentFields(feature NativeFeature) []NativeFeature {
 			if feature.Scope == "user" {
 				field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-agent-no-infer-user.json"}
 			}
+		}
+		if name == "model" {
+			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
+			field.Limitation = "Fixture verifies that a delegated child turn uses the agent's own model field instead of inheriting the parent session's model. Fallback when the declared model is unavailable, the models/modelPolicy fields, and Auto-session inheritance need separate evidence."
+			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-agent-model-override-" + feature.Scope + ".json"}
 		}
 		if name == "mcp-servers" {
 			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
