@@ -12,7 +12,7 @@ func copilotHooksFixture(t *testing.T, scope, body string, required bool) string
 	t.Helper()
 	repo := nativeLSPFixture(t, scope, `{}`, required)
 	base := filepath.Join(repo, ".agents/native/com.github.copilot")
-	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "hooks", Source: "hooks.json", Name: "fixture.json"}}}
+	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "hooks", Source: "hooks.json", Name: "fixture.json"}}}
 	data, _ := json.Marshal(profile)
 	os.WriteFile(filepath.Join(base, "profile.json"), data, 0600)
 	os.WriteFile(filepath.Join(base, "hooks.json"), []byte(body), 0600)
@@ -230,7 +230,7 @@ func TestNativeCopilotInlineHooks(t *testing.T) {
 		body := `{"hooks":{"preToolUse":[{"exec":"program","args":[],"env":{"API_KEY":"${KEY}"}}]},"beep":false}`
 		repo := nativeLSPFixture(t, scope, `{}`, true)
 		base := filepath.Join(repo, ".agents/native/com.github.copilot")
-		profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "config", Source: "settings.json"}}}
+		profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "config", Source: "settings.json"}}}
 		// The beep setting is a user-only field.
 		if scope == "project" {
 			body = `{"hooks":{"preToolUse":[{"exec":"program","args":[],"env":{"API_KEY":"${KEY}"}}]}}`

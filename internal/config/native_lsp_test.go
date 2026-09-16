@@ -15,7 +15,7 @@ func nativeLSPFixture(t *testing.T, scope, content string, required bool) string
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	profile, _ := json.Marshal(nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "lsp", Source: "lsp.json"}}})
+	profile, _ := json.Marshal(nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "lsp", Source: "lsp.json"}}})
 	for path, data := range map[string][]byte{filepath.Join(repo, ".agents/AGENTS.md"): []byte("Fixture.\n"), filepath.Join(repo, ".agents/manifest.json"): []byte(`{"version":"1.1.0-draft.2","profiles":["native"]}`), filepath.Join(dir, "profile.json"): profile, filepath.Join(dir, "lsp.json"): []byte(content)} {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)

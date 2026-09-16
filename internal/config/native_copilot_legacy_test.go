@@ -15,7 +15,7 @@ func copilotLegacyFixture(t *testing.T, scope string, values map[string]any) str
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "config", Source: "settings.json"}}}
+	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: true, Artifacts: []nativeArtifact{{Kind: "config", Source: "settings.json"}}}
 	metadata, _ := json.Marshal(profile)
 	for path, data := range map[string][]byte{
 		filepath.Join(repo, ".agents/manifest.json"): []byte(`{"version":"1.1.0-draft.2","profiles":["native"]}`),

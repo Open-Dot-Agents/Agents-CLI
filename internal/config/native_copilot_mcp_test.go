@@ -33,7 +33,7 @@ func nativeCopilotMCPFixture(t *testing.T, scope, source string, required bool) 
 	t.Helper()
 	repo := nativeLSPFixture(t, scope, `{}`, required)
 	dir := filepath.Join(repo, ".agents/native/com.github.copilot")
-	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.83", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "mcp", Source: "mcp.json"}}}
+	profile := nativeProfile{Namespace: "com.github.copilot", HarnessVersion: "=1.0.84-9", Scope: scope, Required: required, Artifacts: []nativeArtifact{{Kind: "mcp", Source: "mcp.json"}}}
 	data, _ := json.Marshal(profile)
 	os.WriteFile(filepath.Join(dir, "profile.json"), data, 0600)
 	os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(source), 0600)

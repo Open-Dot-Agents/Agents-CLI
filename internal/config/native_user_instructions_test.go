@@ -16,7 +16,7 @@ func TestNativeCopilotUserInstructionsKeepDeclaredSource(t *testing.T) {
 	writeFixture(t, filepath.Join(root, "manifest.json"), `{"version":"1.1.0-draft.2","profiles":["native"]}`)
 	writeFixture(t, filepath.Join(root, "AGENTS.md"), "Keep project policy.\n")
 	profile := filepath.Join(root, "native/com.github.copilot/profile.json")
-	writeFixture(t, profile, `{"namespace":"com.github.copilot","harness_version":"=1.0.83","scope":"user","required":true,"artifacts":[{"kind":"instructions","source":"policy/local.md","name":"kept"}]}`)
+	writeFixture(t, profile, `{"namespace":"com.github.copilot","harness_version":"=1.0.84-9","scope":"user","required":true,"artifacts":[{"kind":"instructions","source":"policy/local.md","name":"kept"}]}`)
 	source := filepath.Join(root, "native/com.github.copilot/policy/local.md")
 	writeFixture(t, source, "User policy.\n@policy.md\n")
 	writeFixture(t, filepath.Join(home, "policy.md"), "External user reference.\n")
@@ -75,7 +75,7 @@ func TestNativeUserInstructionImportRefusesDuplicateTarget(t *testing.T) {
 	root := filepath.Join(repo, ".agents")
 	writeFixture(t, filepath.Join(root, "manifest.json"), `{"version":"1.1.0-draft.2","profiles":["native"]}`)
 	writeFixture(t, filepath.Join(root, "AGENTS.md"), "Project policy.\n")
-	writeFixture(t, filepath.Join(root, "native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.83","scope":"user","required":true,"artifacts":[{"kind":"instructions","source":"first.md"},{"kind":"instructions","source":"second.md"}]}`)
+	writeFixture(t, filepath.Join(root, "native/com.github.copilot/profile.json"), `{"namespace":"com.github.copilot","harness_version":"=1.0.84-9","scope":"user","required":true,"artifacts":[{"kind":"instructions","source":"first.md"},{"kind":"instructions","source":"second.md"}]}`)
 	for _, name := range []string{"first.md", "second.md"} {
 		writeFixture(t, filepath.Join(root, "native/com.github.copilot", name), "User policy.\n")
 	}
