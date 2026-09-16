@@ -256,7 +256,7 @@ func nativeReadCopilotProjectMCP(base string) ([]byte, error) {
 func nativeCopilotMCPFeature(feature NativeFeature) NativeFeature {
 	feature.Disposition, feature.Activation = "artifact-mapping", "pending native reload"
 	feature.NativeStatus = "bounded-fixture-execution"
-	feature.Limitation = "Copilot 1.0.83 fixtures verify local and HTTP discovery, native expansion, working directory, and a filtered tool call. Project MCP needs native folder trust. OAuth, SSE, timeout enforcement, and cache controls need separate evidence."
+	feature.Limitation = "Copilot 1.0.83 fixtures verify local and HTTP discovery, native expansion, working directory, a filtered tool call, and timeout enforcement. Project MCP needs native folder trust. OAuth, SSE, and cache controls need separate evidence."
 	prefix := "WORKBENCH/evidence/native-draft2-debug/"
 	feature.Evidence = []string{prefix + "copilot-mcp-final-" + feature.Scope + ".json", prefix + "copilot-mcp-http-" + feature.Scope + ".json", "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-configuration-fields"}
 	return feature
@@ -279,6 +279,10 @@ func nativeCopilotMCPFields(feature NativeFeature) []NativeFeature {
 		case "type", "command", "args", "env", "cwd", "url", "headers", "tools":
 			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
 			field.Limitation = "Local and HTTP fixture behavior only. Native variable expansion does not establish portable fail-on-missing reference semantics. SSE remains unverified."
+		case "timeout":
+			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
+			field.Limitation = "Fixture pairs a slow local MCP server response with a short and a long configured timeout: the short timeout ends the call as a failure (MCP error -32001, request timed out) and the long timeout tolerates the same delay. Remote transports and non-default timeout units need separate evidence."
+			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-mcp-timeout-exceeded-" + feature.Scope + ".json", "WORKBENCH/evidence/native-draft2-debug/copilot-mcp-timeout-tolerated-" + feature.Scope + ".json"}
 		}
 		output = append(output, field)
 	}

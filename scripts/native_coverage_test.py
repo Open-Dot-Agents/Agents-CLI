@@ -391,11 +391,11 @@ class NativeCoverageTest(unittest.TestCase):
         self.assertEqual(self.feature('copilot', 'mcp', 'headers')['category'], 'native-configuration')
 
     def test_mcp_fields_use_the_native_artifact_validator(self):
-        for name in ('command', 'headers', 'tools'):
+        for name in ('command', 'headers', 'tools', 'timeout'):
             feature = self.feature('copilot', 'mcp', name)
             self.assertTrue(feature['validation_source'].endswith('native_copilot_mcp.go'))
             self.assertEqual(feature['native_status'], 'bounded-fixture-execution')
-        self.assertEqual(self.feature('copilot', 'mcp', 'timeout')['native_status'], 'unverified')
+        self.assertEqual(self.feature('copilot', 'mcp', 'oauthClientId')['native_status'], 'unverified')
 
     def test_agent_local_mcp_has_separate_evidence(self):
         feature = self.feature('copilot', 'agent-frontmatter', 'mcp-servers')
