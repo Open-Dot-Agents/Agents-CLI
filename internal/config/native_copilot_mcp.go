@@ -256,7 +256,7 @@ func nativeReadCopilotProjectMCP(base string) ([]byte, error) {
 func nativeCopilotMCPFeature(feature NativeFeature) NativeFeature {
 	feature.Disposition, feature.Activation = "artifact-mapping", "pending native reload"
 	feature.NativeStatus = "bounded-fixture-execution"
-	feature.Limitation = "Copilot 1.0.83 fixtures verify local and HTTP discovery, native expansion, working directory, a filtered tool call, and timeout enforcement. Project MCP needs native folder trust. OAuth, SSE, and cache controls need separate evidence."
+	feature.Limitation = "Copilot 1.0.83 fixtures verify local and HTTP discovery, native expansion, working directory, a filtered tool call, timeout enforcement, and restart-time tool-cache reconciliation. Project MCP needs native folder trust. OAuth, SSE, and deferred-tool controls need separate evidence."
 	prefix := "WORKBENCH/evidence/native-draft2-debug/"
 	feature.Evidence = []string{prefix + "copilot-mcp-final-" + feature.Scope + ".json", prefix + "copilot-mcp-http-" + feature.Scope + ".json", "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-configuration-fields"}
 	return feature
@@ -283,6 +283,10 @@ func nativeCopilotMCPFields(feature NativeFeature) []NativeFeature {
 			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
 			field.Limitation = "Fixture pairs a slow local MCP server response with a short and a long configured timeout: the short timeout ends the call as a failure (MCP error -32001, request timed out) and the long timeout tolerates the same delay. Remote transports and non-default timeout units need separate evidence."
 			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-mcp-timeout-exceeded-" + feature.Scope + ".json", "WORKBENCH/evidence/native-draft2-debug/copilot-mcp-timeout-tolerated-" + feature.Scope + ".json"}
+		case "disableToolCache":
+			field.Disposition, field.NativeStatus = "artifact-field-mapping", "bounded-fixture-execution"
+			field.Limitation = "Fixture restarts the native process twice under the same COPILOT_HOME against the same local MCP server and counts tools/list requests on the second restart: disableToolCache false (default) issues two tools/list calls (a cache reconciliation query, then a live query), while disableToolCache true issues exactly one direct call. This isolates the field's effect on restart-time tool-list re-querying; it does not establish behavior across a live listChanged notification within one session, or for HTTP transports."
+			field.Evidence = []string{"WORKBENCH/evidence/native-draft2-debug/copilot-mcp-cache-enabled-" + feature.Scope + ".json", "WORKBENCH/evidence/native-draft2-debug/copilot-mcp-cache-disabled-" + feature.Scope + ".json"}
 		}
 		output = append(output, field)
 	}
